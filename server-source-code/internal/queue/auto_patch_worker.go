@@ -28,6 +28,7 @@ const autoPatchFireTolerance = 30 * time.Minute
 // Registered on a 1-minute cron; each policy fires at most once per slot via
 // the auto_patch_last_run_at stamp.
 type AutoPatchDispatchHandler struct {
+	singleTenant bool
 	policies    *store.PatchPoliciesStore
 	patchRuns   *store.PatchRunsStore
 	hosts       *store.HostsStore
@@ -84,8 +85,10 @@ func autoPatchDueSlot(p db.PatchPolicy, now time.Time, loc *time.Location) (time
 
 // ProcessTask implements asynq.Handler.
 func (h *AutoPatchDispatchHandler) ProcessTask(ctx context.Context, _ *asynq.Task) error {
-	if err := h.processRemediation(ctx); err != nil {
-		return err
+	if h.singleTenant {
+		if err := h.processRemediation(ctx); err != nil {
+			return err
+		}
 	}
 	// Legacy full-upgrade schedules are an independent explicit opt-in.
 	// A severity policy cannot fall through to an unrestricted full upgrade.
