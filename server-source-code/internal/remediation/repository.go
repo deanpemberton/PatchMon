@@ -14,6 +14,7 @@ import (
 type Configuration struct {
 	PolicyID string `json:"policy_id"`
 	Name string `json:"name"`
+	DelayType string `json:"delay_type"`
 	Revision int64 `json:"revision"`
 	Policy Policy `json:"policy"`
 	Report json.RawMessage `json:"report,omitempty"`
@@ -24,7 +25,7 @@ func ReadConfiguration(ctx context.Context,d *database.DB,id string)(Configurati
 	tx,err:=d.Begin(ctx);if err!=nil{return c,err}
 	defer func(){_ = tx.Rollback(context.WithoutCancel(ctx))}()
 	var raw []byte
-	err=tx.QueryRow(ctx,`SELECT p.name,r.settings,COALESCE(r.revision,0),r.report FROM patch_policies p LEFT JOIN patch_remediation_policies r ON r.policy_id=p.id WHERE p.id=$1`,id).Scan(&c.Name,&raw,&c.Revision,&c.Report)
+	err=tx.QueryRow(ctx,`SELECT p.name,p.patch_delay_type,r.settings,COALESCE(r.revision,0),r.report FROM patch_policies p LEFT JOIN patch_remediation_policies r ON r.policy_id=p.id WHERE p.id=$1`,id).Scan(&c.Name,&c.DelayType,&raw,&c.Revision,&c.Report)
 	if err!=nil{return c,err}
 	if len(raw)>0 {if err=json.Unmarshal(raw,&c.Policy);err!=nil{return c,err}}
 	return c,c.Policy.Validate()
@@ -38,8 +39,9 @@ func WriteConfiguration(ctx context.Context,d *database.DB,id,actor string,expec
 	defer func(){_ = tx.Rollback(context.WithoutCancel(ctx))}()
 	// Lock the native policy to serialize creation and edits, including legacy
 	// schedule changes. A severity policy must never fall through to patch_all.
-	var exists string
-	if err=tx.QueryRow(ctx,"SELECT id FROM patch_policies WHERE id=$1 FOR UPDATE",id).Scan(&exists);err!=nil{return err}
+	var delay string
+	if err=tx.QueryRow(ctx,"SELECT patch_delay_type FROM patch_policies WHERE id=$1 FOR UPDATE",id).Scan(&delay);err!=nil{return err}
+	if p.Mode!=ModeDisabled&&delay!="immediate"{return ErrImmediateRequired}
 	var revision int64
 	err=tx.QueryRow(ctx,"SELECT revision FROM patch_remediation_policies WHERE policy_id=$1",id).Scan(&revision)
 	if err!=nil&&!errors.Is(err,pgx.ErrNoRows){return err}
@@ -53,16 +55,17 @@ func WriteConfiguration(ctx context.Context,d *database.DB,id,actor string,expec
 	return tx.Commit(ctx)
 }
 
+var ErrImmediateRequired=errors.New("severity remediation requires an immediate native policy")
 var ErrRevision=errors.New("policy changed; reload before saving")
 
 func ListConfigurations(ctx context.Context,d *database.DB)([]Configuration,error) {
 	tx,err:=d.Begin(ctx);if err!=nil{return nil,err}
 	defer func(){_ = tx.Rollback(context.WithoutCancel(ctx))}()
-	rows,err:=tx.Query(ctx,`SELECT p.id,p.name,r.settings,r.revision FROM patch_remediation_policies r JOIN patch_policies p ON p.id=r.policy_id ORDER BY p.id`)
+	rows,err:=tx.Query(ctx,`SELECT p.id,p.name,p.patch_delay_type,r.settings,r.revision FROM patch_remediation_policies r JOIN patch_policies p ON p.id=r.policy_id ORDER BY p.id`)
 	if err!=nil{return nil,err};defer rows.Close()
 	out:=[]Configuration{}
 	for rows.Next(){var c Configuration;var raw []byte
-		if err=rows.Scan(&c.PolicyID,&c.Name,&raw,&c.Revision);err!=nil{return nil,err}
+		if err=rows.Scan(&c.PolicyID,&c.Name,&c.DelayType,&raw,&c.Revision);err!=nil{return nil,err}
 		if err=json.Unmarshal(raw,&c.Policy);err!=nil{return nil,err}
 		if err=c.Policy.Validate();err!=nil{return nil,err}
 		if c.Policy.Mode!=ModeDisabled {out=append(out,c)}
@@ -172,5 +175,15 @@ func CheckHost(ctx context.Context,d *database.DB,h HostEvidence,pkgs []Verified
 		if err!=nil{return err}
 		if !pending||installed!=pkg.Installed||candidate!=pkg.Candidate||!Fresh(checked,now,24*time.Hour){return fmt.Errorf("package snapshot changed: %s",pkg.Name)}
 	}
+	return nil
+}
+
+func CheckEvidenceIdentity(ctx context.Context,d *database.DB,h HostEvidence,now time.Time) error {
+	if !Fresh(h.ObservedAt,now,MaxEvidenceAge)||h.IdentityFingerprint==""||h.PackagesHash==""{return errors.New("invalid host evidence identity")}
+	tx,err:=d.Begin(ctx);if err!=nil{return err}
+	defer func(){_=tx.Rollback(context.WithoutCancel(ctx))}()
+	var matches bool
+	if err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM hosts WHERE id=$1 AND identity_fingerprint=$2 AND packages_hash=$3 AND os_type=$4 AND os_version=$5 AND status='active' AND identity_conflict_at IS NULL AND last_update >= $6 AND last_full_report_at >= $7)`,h.HostID,h.IdentityFingerprint,h.PackagesHash,h.OS,h.OSVersion,now.Add(-90*time.Minute),now.Add(-24*time.Hour)).Scan(&matches);err!=nil{return err}
+	if !matches{return errors.New("host evidence does not match current inventory")}
 	return nil
 }
