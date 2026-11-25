@@ -103,6 +103,7 @@ export default function RemediationPolicy({ policy, hosts }) {
 		const host = hosts.find((item) => item.id === id);
 		return host?.friendly_name || host?.hostname || id;
 	};
+	const unclassified = (report?.hosts || []).flatMap((host) => (host.unclassified_security_updates || []).map((name) => ({ host: host.host_id, name })));
 	const decisions = (report?.hosts || []).flatMap((host) => (host.decisions || []).map((decision) => ({ ...decision, host: host.host_id, blocker: host.blocker })));
 	return (
 		<section className="border-t border-secondary-200 dark:border-secondary-700 p-4 space-y-4">
@@ -116,6 +117,7 @@ export default function RemediationPolicy({ policy, hosts }) {
 					<h4 className="font-semibold text-sm">Latest evaluation</h4>
 					<p className="text-sm">Open: {report.open_findings} · Overdue: {report.overdue_findings} · Unobserved: {report.unobserved_findings}</p>
 					<p className="text-xs text-secondary-500">{new Date(report.evaluated_at).toLocaleString()} · {report.reason || (report.evidence_available ? "Signed evidence available" : "Evidence unavailable")}</p>
+					{unclassified.length > 0 && <details className="text-sm text-amber-600"><summary>{unclassified.length} unclassified security updates (manual review)</summary><ul className="max-h-40 overflow-auto">{unclassified.slice(0, 500).map((item) => <li key={`${item.host}:${item.name}`}>{hostName(item.host)}: {item.name}</li>)}</ul></details>}
 					<div className="max-h-80 overflow-auto">
 						<table className="min-w-full text-xs">
 							<thead><tr>{["Host", "Package", "CVE", "CVSS", "Priority", "Deadline", "Decision"].map((label) => <th key={label} scope="col" className="text-left p-2">{label}</th>)}</tr></thead>
