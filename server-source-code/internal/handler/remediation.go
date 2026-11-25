@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
@@ -55,9 +56,10 @@ func (h *PatchingHandler) PutRemediationPolicy(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var body struct {
-		Revision         int64              `json:"revision"`
-		Policy           remediation.Policy `json:"policy"`
-		ConfirmAutomatic bool               `json:"confirm_automatic"`
+		Revision              int64              `json:"revision"`
+		Policy                remediation.Policy `json:"policy"`
+		ConfirmAutomatic      bool               `json:"confirm_automatic"`
+		ConfirmRecoveryWaiver bool               `json:"confirm_recovery_waiver"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 32768)
 	decoder := json.NewDecoder(r.Body)
@@ -65,6 +67,17 @@ func (h *PatchingHandler) PutRemediationPolicy(w http.ResponseWriter, r *http.Re
 	if err := decoder.Decode(&body); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid remediation policy"})
 		return
+	}
+	// Do not trust an expiry supplied by the caller. Only a new explicit
+	// browser authorization creates a server-timed, one-hour window.
+	body.Policy.RecoveryWaiverUntil = nil
+	if body.ConfirmRecoveryWaiver {
+		if body.Policy.Mode != remediation.ModeAutomatic || !body.ConfirmAutomatic || !remediation.ExecutionEnabled() {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "Recovery waiver requires explicit automatic execution confirmation"})
+			return
+		}
+		until := time.Now().UTC().Add(remediation.RecoveryWaiverDuration)
+		body.Policy.RecoveryWaiverUntil = &until
 	}
 	if err := body.Policy.Validate(); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -94,7 +107,7 @@ func (h *PatchingHandler) PutRemediationPolicy(w http.ResponseWriter, r *http.Re
 			JSON(w, http.StatusNotFound, map[string]string{"error": "Policy not found"})
 			return
 		}
-		if errors.Is(err, remediation.ErrImmediateRequired) {
+		if errors.Is(err, remediation.ErrImmediateRequired) || errors.Is(err, remediation.ErrRecoveryWaiverScope) {
 			JSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}

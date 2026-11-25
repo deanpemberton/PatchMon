@@ -40,3 +40,47 @@ func TestEvidenceSignatureExpiryAndBackup(t *testing.T) {
 		t.Fatal("tampered evidence accepted")
 	}
 }
+
+func TestRecoveryWaiverIsSingleHostAndTimeLimited(t *testing.T) {
+	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	until := now.Add(RecoveryWaiverDuration)
+	p := DefaultPolicy()
+	p.Mode = ModeAutomatic
+	p.MaxConcurrent = 1
+	p.CanaryHostIDs = []string{"example-canary"}
+	p.RecoveryWaiverUntil = &until
+	h := HostEvidence{HostID: "example-canary", IdentityFingerprint: "fixture", PackagesHash: "fixture", ObservedAt: now, BackupAt: now.Add(-time.Hour), BackupComplete: true, ApplicationHealthy: true}
+	if !h.Safe(now, p) {
+		t.Fatal("explicitly waived recovery with valid backup and health rejected")
+	}
+	h.BackupComplete = false
+	if h.Safe(now, p) {
+		t.Fatal("waiver bypassed backup")
+	}
+	h.BackupComplete = true
+	h.ApplicationHealthy = false
+	if h.Safe(now, p) {
+		t.Fatal("waiver bypassed health")
+	}
+	h.ApplicationHealthy = true
+	h.HostID = "other-example"
+	h.RecoveryVerified = true
+	if h.Safe(now, p) {
+		t.Fatal("waiver allowed a different host")
+	}
+	h.HostID = "example-canary"
+	h.ObservedAt = until
+	if h.Safe(until, p) {
+		t.Fatal("expired waiver allowed execution")
+	}
+	h.ObservedAt = now
+	p.MaxConcurrent = 2
+	if p.Validate() == nil || h.Safe(now, p) {
+		t.Fatal("waiver allowed multiple concurrent hosts")
+	}
+	p.MaxConcurrent = 1
+	p.CanaryHostIDs = nil
+	if p.Validate() == nil || h.Safe(now, p) {
+		t.Fatal("waiver allowed missing canary")
+	}
+}

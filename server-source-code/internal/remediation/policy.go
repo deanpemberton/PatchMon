@@ -32,13 +32,14 @@ var (
 )
 
 type Policy struct {
-	Mode              string   `json:"mode"`
-	CriticalHours     int      `json:"critical_hours"`
-	HighHours         int      `json:"high_hours"`
-	RoutineHours      int      `json:"routine_hours"`
-	MaxConcurrent     int      `json:"max_concurrent"`
-	BackupMaxAgeHours int      `json:"backup_max_age_hours"`
-	CanaryHostIDs     []string `json:"canary_host_ids"`
+	Mode                string     `json:"mode"`
+	CriticalHours       int        `json:"critical_hours"`
+	HighHours           int        `json:"high_hours"`
+	RoutineHours        int        `json:"routine_hours"`
+	MaxConcurrent       int        `json:"max_concurrent"`
+	BackupMaxAgeHours   int        `json:"backup_max_age_hours"`
+	CanaryHostIDs       []string   `json:"canary_host_ids"`
+	RecoveryWaiverUntil *time.Time `json:"recovery_waiver_until,omitempty"`
 }
 
 func DefaultPolicy() Policy {
@@ -66,7 +67,20 @@ func (p Policy) Validate() error {
 	if p.Mode == ModeAutomatic && len(p.CanaryHostIDs) == 0 {
 		return errors.New("automatic remediation requires at least one canary host")
 	}
+	if p.RecoveryWaiverUntil != nil && (p.Mode != ModeAutomatic || p.MaxConcurrent != 1 || len(p.CanaryHostIDs) != 1 || p.RecoveryWaiverUntil.IsZero()) {
+		return errors.New("a recovery waiver requires a single automatic canary with concurrency one")
+	}
 	return nil
+}
+
+// A waived recovery rehearsal is an explicit, short-lived policy risk decision.
+// It never represents a successful restore, and cannot authorize any other host.
+const RecoveryWaiverDuration = time.Hour
+
+func (p Policy) recoveryWaiverActive(hostID string, now time.Time) bool {
+	return p.RecoveryWaiverUntil != nil && p.Validate() == nil &&
+		p.CanaryHostIDs[0] == hostID && now.Before(*p.RecoveryWaiverUntil) &&
+		p.RecoveryWaiverUntil.Sub(now) <= RecoveryWaiverDuration
 }
 
 // Target binds a vendor-verified fixed candidate to the exact installed binary.

@@ -160,8 +160,14 @@ func Read(now time.Time) (Evidence, error) {
 func ExecutionEnabled() bool { return os.Getenv(ExecutionEnv) == "true" }
 
 func (h HostEvidence) Safe(now time.Time, p Policy) bool {
+	// A waived policy is fail-closed after expiry and for any other host,
+	// even if that host has independently verified recovery.
+	recoveryOK := h.RecoveryVerified
+	if p.RecoveryWaiverUntil != nil {
+		recoveryOK = p.recoveryWaiverActive(h.HostID, now)
+	}
 	return Fresh(h.ObservedAt, now, MaxEvidenceAge) && h.IdentityFingerprint != "" && h.PackagesHash != "" &&
-		h.BackupComplete && h.RecoveryVerified && h.ApplicationHealthy &&
+		h.BackupComplete && recoveryOK && h.ApplicationHealthy &&
 		Fresh(h.BackupAt, now, time.Duration(p.BackupMaxAgeHours)*time.Hour)
 }
 

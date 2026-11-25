@@ -65,6 +65,18 @@ func WriteConfiguration(ctx context.Context, d *database.DB, id, actor string, e
 	if p.Mode != ModeDisabled && delay != "immediate" {
 		return ErrImmediateRequired
 	}
+	if p.RecoveryWaiverUntil != nil {
+		if !p.recoveryWaiverActive(p.CanaryHostIDs[0], time.Now().UTC()) {
+			return ErrRecoveryWaiverScope
+		}
+		var single bool
+		if err = tx.QueryRow(ctx, "SELECT count(*)=1 AND count(*) FILTER (WHERE target_type='host' AND target_id=$2)=1 FROM patch_policy_assignments WHERE patch_policy_id=$1", id, p.CanaryHostIDs[0]).Scan(&single); err != nil {
+			return err
+		}
+		if !single {
+			return ErrRecoveryWaiverScope
+		}
+	}
 	var revision int64
 	err = tx.QueryRow(ctx, "SELECT revision FROM patch_remediation_policies WHERE policy_id=$1", id).Scan(&revision)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -88,6 +100,7 @@ func WriteConfiguration(ctx context.Context, d *database.DB, id, actor string, e
 
 var ErrImmediateRequired = errors.New("severity remediation requires an immediate native policy")
 var ErrRevision = errors.New("policy changed; reload before saving")
+var ErrRecoveryWaiverScope = errors.New("recovery waiver requires exactly one directly assigned canary and a current one-hour window")
 
 func ListConfigurations(ctx context.Context, d *database.DB) ([]Configuration, error) {
 	tx, err := d.Begin(ctx)

@@ -119,6 +119,19 @@ func TestMigrationAndRemediationRepository(t *testing.T) {
 	if err = CheckHost(ctx, d, h, s.Packages, now, c.Policy); err == nil {
 		t.Fatal("changed candidate passed safety gate")
 	}
+	waiver := DefaultPolicy()
+	waiver.Mode = ModeAutomatic
+	waiver.MaxConcurrent = 1
+	waiver.CanaryHostIDs = []string{"fixture-host"}
+	until := time.Now().UTC().Add(30 * time.Minute)
+	waiver.RecoveryWaiverUntil = &until
+	if err = WriteConfiguration(ctx, d, c.PolicyID, "fixture-owner", c.Revision, waiver); !errors.Is(err, ErrRecoveryWaiverScope) {
+		t.Fatalf("group-scoped recovery waiver accepted: %v", err)
+	}
+	exec("UPDATE patch_policy_assignments SET target_type='host',target_id='fixture-host' WHERE id='fixture-assignment'")
+	if err = WriteConfiguration(ctx, d, c.PolicyID, "fixture-owner", c.Revision, waiver); err != nil {
+		t.Fatalf("single-host recovery waiver rejected: %v", err)
+	}
 	exec("INSERT INTO patch_policy_exclusions(id,patch_policy_id,host_id,updated_at) VALUES('fixture-exclusion','fixture-policy','fixture-host',NOW())")
 	if id, e := ResolvePolicy(ctx, d, h.HostID); e != nil || id != "" {
 		t.Fatalf("exclusion ignored: %s %v", id, e)

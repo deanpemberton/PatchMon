@@ -19,12 +19,18 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 	const toast = useToast();
 	const prefix = useId();
 	const [form, setForm] = useState(configuration.policy);
+	const [waiveRecovery, setWaiveRecovery] = useState(false);
+	const canWaiveRecovery =
+		form.mode === "automatic" &&
+		form.max_concurrent === 1 &&
+		(form.canary_host_ids || []).length === 1;
 	const mutation = useMutation({
 		mutationFn: (confirmed) =>
 			api.put(`/patching/policies/${configuration.policy_id}/remediation`, {
 				revision: configuration.revision,
-				policy: form,
+				policy: { ...form, recovery_waiver_until: undefined },
 				confirm_automatic: confirmed,
+				confirm_recovery_waiver: canWaiveRecovery && waiveRecovery,
 			}),
 		onSuccess: () => {
 			toast.success("Remediation policy saved");
@@ -40,7 +46,9 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 			confirmed = await confirm({
 				title: "Authorize automatic remediation",
 				message:
-					"This policy authorizes unattended, version-pinned package upgrades for its effective host scope. Backups, validation and canaries are required. No automatic reboot is permitted.",
+					canWaiveRecovery && waiveRecovery
+						? "Authorize a single directly assigned canary for one hour without a tested restore. A complete recent backup, health checks, signed evidence and version-pinned validation remain mandatory. Recovery may fail. No automatic reboot."
+						: "This policy authorizes unattended, version-pinned package upgrades for its effective host scope. Backups, validation and canaries are required. No automatic reboot is permitted.",
 				confirmLabel: "Authorize automatic remediation",
 			});
 			if (!confirmed) return;
@@ -133,6 +141,27 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 					))}
 				</div>
 			</fieldset>
+			{configuration.policy.recovery_waiver_until && (
+				<p className="text-sm text-amber-700 dark:text-amber-300">
+					Recovery waiver expires at{" "}
+					{new Date(
+						configuration.policy.recovery_waiver_until,
+					).toLocaleString()}
+					. Execution is blocked after expiry.
+				</p>
+			)}
+			{canWaiveRecovery && (
+				<label className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
+					<input
+						type="checkbox"
+						disabled={!canEdit}
+						checked={waiveRecovery}
+						onChange={(event) => setWaiveRecovery(event.target.checked)}
+					/>
+					Allow this directly assigned canary to run for one hour without a
+					tested restore. A current complete backup is still required.
+				</label>
+			)}
 			{canEdit && (
 				<button
 					type="submit"
