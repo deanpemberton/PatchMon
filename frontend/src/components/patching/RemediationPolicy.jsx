@@ -39,7 +39,8 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 		if (form.mode === "automatic") {
 			confirmed = await confirm({
 				title: "Authorize automatic remediation",
-				message: "This policy authorizes unattended, version-pinned package upgrades for its effective host scope. Backups, validation and canaries are required. No automatic reboot is permitted.",
+				message:
+					"This policy authorizes unattended, version-pinned package upgrades for its effective host scope. Backups, validation and canaries are required. No automatic reboot is permitted.",
 				confirmLabel: "Authorize automatic remediation",
 			});
 			if (!confirmed) return;
@@ -56,33 +57,91 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 	return (
 		<form onSubmit={save} className="space-y-3">
 			<p className="text-sm text-secondary-500">
-				Requires an immediate patch policy, signed advisory evidence, tested recovery, and a compatible APT agent. Unknown severity is never treated as low.
+				Requires an immediate patch policy, signed advisory evidence, tested
+				recovery, and a compatible APT agent. Unknown severity is never treated
+				as low.
 			</p>
-			<label htmlFor={prefix + "-mode"} className="block text-sm font-medium">Execution mode</label>
-			<select id={prefix + "-mode"} className="input-field w-full" value={form.mode} disabled={!canEdit} onChange={(event) => change("mode", event.target.value)}>
-				{modes.map(([value, label]) => <option key={value} value={value} disabled={value === "automatic" && !executionEnabled}>{label}</option>)}
+			<label htmlFor={prefix + "-mode"} className="block text-sm font-medium">
+				Execution mode
+			</label>
+			<select
+				id={prefix + "-mode"}
+				className="input-field w-full"
+				value={form.mode}
+				disabled={!canEdit}
+				onChange={(event) => change("mode", event.target.value)}
+			>
+				{modes.map(([value, label]) => (
+					<option
+						key={value}
+						value={value}
+						disabled={value === "automatic" && !executionEnabled}
+					>
+						{label}
+					</option>
+				))}
 			</select>
-			{!executionEnabled && <p className="text-sm text-amber-600">Server execution switch is off. No managed upgrade can execute.</p>}
+			{!executionEnabled && (
+				<p className="text-sm text-amber-600">
+					Server execution switch is off. No managed upgrade can execute.
+				</p>
+			)}
 			<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 				{fields.map(([key, label, min, max]) => (
 					<div key={key}>
-						<label htmlFor={prefix + key} className="block text-sm">{label}</label>
-						<input id={prefix + key} className="input-field w-full" type="number" min={min} max={max} required disabled={!canEdit} value={form[key]} onChange={(event) => change(key, Number(event.target.value))} />
+						<label htmlFor={prefix + key} className="block text-sm">
+							{label}
+						</label>
+						<input
+							id={prefix + key}
+							className="input-field w-full"
+							type="number"
+							min={min}
+							max={max}
+							required
+							disabled={!canEdit}
+							value={form[key]}
+							onChange={(event) => change(key, Number(event.target.value))}
+						/>
 					</div>
 				))}
 			</div>
 			<fieldset>
-				<legend className="text-sm font-medium">Canary hosts (must belong to this policy)</legend>
+				<legend className="text-sm font-medium">
+					Canary hosts (must belong to this policy)
+				</legend>
 				<div className="max-h-40 overflow-auto space-y-1">
 					{hosts.map((host) => (
 						<label key={host.id} className="flex items-center gap-2 text-sm">
-							<input type="checkbox" disabled={!canEdit} checked={(form.canary_host_ids || []).includes(host.id)} onChange={(event) => change("canary_host_ids", event.target.checked ? [...(form.canary_host_ids || []), host.id] : (form.canary_host_ids || []).filter((id) => id !== host.id))} />
+							<input
+								type="checkbox"
+								disabled={!canEdit}
+								checked={(form.canary_host_ids || []).includes(host.id)}
+								onChange={(event) =>
+									change(
+										"canary_host_ids",
+										event.target.checked
+											? [...(form.canary_host_ids || []), host.id]
+											: (form.canary_host_ids || []).filter(
+													(id) => id !== host.id,
+												),
+									)
+								}
+							/>
 							{host.friendly_name || host.hostname || host.id}
 						</label>
 					))}
 				</div>
 			</fieldset>
-			{canEdit && <button type="submit" disabled={mutation.isPending} className="btn-primary">Save remediation policy</button>}
+			{canEdit && (
+				<button
+					type="submit"
+					disabled={mutation.isPending}
+					className="btn-primary"
+				>
+					Save remediation policy
+				</button>
+			)}
 		</form>
 	);
 }
@@ -92,47 +151,127 @@ export default function RemediationPolicy({ policy, hosts }) {
 	const queryKey = ["patch-remediation", policy.id];
 	const { data, isLoading, isError } = useQuery({
 		queryKey,
-		queryFn: () => api.get(`/patching/policies/${policy.id}/remediation`).then((res) => res.data),
+		queryFn: () =>
+			api
+				.get(`/patching/policies/${policy.id}/remediation`)
+				.then((res) => res.data),
 		refetchInterval: 60000,
 	});
-	if (isLoading) return <p className="p-4 text-sm">Loading remediation policy...</p>;
-	if (isError || !data?.configuration) return <p className="p-4 text-sm text-amber-600">Remediation settings unavailable.</p>;
+	if (isLoading)
+		return <p className="p-4 text-sm">Loading remediation policy...</p>;
+	if (isError || !data?.configuration)
+		return (
+			<p className="p-4 text-sm text-amber-600">
+				Remediation settings unavailable.
+			</p>
+		);
 	const configuration = data.configuration;
 	const report = configuration.report;
 	const hostName = (id) => {
 		const host = hosts.find((item) => item.id === id);
 		return host?.friendly_name || host?.hostname || id;
 	};
-	const unclassified = (report?.hosts || []).flatMap((host) => (host.unclassified_security_updates || []).map((name) => ({ host: host.host_id, name })));
-	const decisions = (report?.hosts || []).flatMap((host) => (host.decisions || []).map((decision) => ({ ...decision, host: host.host_id, blocker: host.blocker })));
+	const unclassified = (report?.hosts || []).flatMap((host) =>
+		(host.unclassified_security_updates || []).map((name) => ({
+			host: host.host_id,
+			name,
+		})),
+	);
+	const decisions = (report?.hosts || []).flatMap((host) =>
+		(host.decisions || []).map((decision) => ({
+			...decision,
+			host: host.host_id,
+			blocker: host.blocker,
+		})),
+	);
 	return (
 		<section className="border-t border-secondary-200 dark:border-secondary-700 p-4 space-y-4">
 			<h3 className="font-semibold">Severity-based remediation</h3>
-			<PolicyEditor key={configuration.revision} configuration={configuration} executionEnabled={data.execution_enabled} hosts={hosts} refresh={() => {
-				queryClient.invalidateQueries({ queryKey });
-				queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
-			}} />
+			<PolicyEditor
+				key={configuration.revision}
+				configuration={configuration}
+				executionEnabled={data.execution_enabled}
+				hosts={hosts}
+				refresh={() => {
+					queryClient.invalidateQueries({ queryKey });
+					queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
+				}}
+			/>
 			{report && (
 				<div className="space-y-2">
 					<h4 className="font-semibold text-sm">Latest evaluation</h4>
-					<p className="text-sm">Open: {report.open_findings} · Overdue: {report.overdue_findings} · Unobserved: {report.unobserved_findings}</p>
-					<p className="text-xs text-secondary-500">{new Date(report.evaluated_at).toLocaleString()} · {report.reason || (report.evidence_available ? "Signed evidence available" : "Evidence unavailable")}</p>
-					{unclassified.length > 0 && <details className="text-sm text-amber-600"><summary>{unclassified.length} unclassified security updates (manual review)</summary><ul className="max-h-40 overflow-auto">{unclassified.slice(0, 500).map((item) => <li key={`${item.host}:${item.name}`}>{hostName(item.host)}: {item.name}</li>)}</ul></details>}
+					<p className="text-sm">
+						Open: {report.open_findings} · Overdue: {report.overdue_findings} ·
+						Unobserved: {report.unobserved_findings}
+					</p>
+					<p className="text-xs text-secondary-500">
+						{new Date(report.evaluated_at).toLocaleString()} ·{" "}
+						{report.reason ||
+							(report.evidence_available
+								? "Signed evidence available"
+								: "Evidence unavailable")}
+					</p>
+					{unclassified.length > 0 && (
+						<details className="text-sm text-amber-600">
+							<summary>
+								{unclassified.length} unclassified security updates (manual
+								review)
+							</summary>
+							<ul className="max-h-40 overflow-auto">
+								{unclassified.slice(0, 500).map((item) => (
+									<li key={`${item.host}:${item.name}`}>
+										{hostName(item.host)}: {item.name}
+									</li>
+								))}
+							</ul>
+						</details>
+					)}
 					<div className="max-h-80 overflow-auto">
 						<table className="min-w-full text-xs">
-							<thead><tr>{["Host", "Package", "CVE", "CVSS", "Priority", "Deadline", "Decision"].map((label) => <th key={label} scope="col" className="text-left p-2">{label}</th>)}</tr></thead>
+							<thead>
+								<tr>
+									{[
+										"Host",
+										"Package",
+										"CVE",
+										"CVSS",
+										"Priority",
+										"Deadline",
+										"Decision",
+									].map((label) => (
+										<th key={label} scope="col" className="text-left p-2">
+											{label}
+										</th>
+									))}
+								</tr>
+							</thead>
 							<tbody>
 								{decisions.slice(0, 500).map((row) => (
-									<tr key={`${row.host}:${row.target.package}:${row.target.cve || row.target.candidate}`} className="border-t border-secondary-200 dark:border-secondary-700">
-										<td className="p-2">{hostName(row.host)}</td><td className="p-2">{row.target.package}</td><td className="p-2">{row.target.cve || "—"}</td>
-										<td className="p-2" title={row.target.score_source || ""}>{row.target.score ?? "Unknown"}</td><td className="p-2">{row.severity}</td>
-										<td className="p-2">{row.deadline ? new Date(row.deadline).toLocaleString() : "Review"}{row.overdue && " (overdue)"}</td>
+									<tr
+										key={`${row.host}:${row.target.package}:${row.target.cve || row.target.candidate}`}
+										className="border-t border-secondary-200 dark:border-secondary-700"
+									>
+										<td className="p-2">{hostName(row.host)}</td>
+										<td className="p-2">{row.target.package}</td>
+										<td className="p-2">{row.target.cve || "—"}</td>
+										<td className="p-2" title={row.target.score_source || ""}>
+											{row.target.score ?? "Unknown"}
+										</td>
+										<td className="p-2">{row.severity}</td>
+										<td className="p-2">
+											{row.deadline
+												? new Date(row.deadline).toLocaleString()
+												: "Review"}
+											{row.overdue && " (overdue)"}
+										</td>
 										<td className="p-2">{row.blocker || row.reason}</td>
 									</tr>
 								))}
 							</tbody>
 						</table>
-						{decisions.length > 500 && <p className="text-xs">Showing first 500 decisions.</p>}
+						{decisions.length > 500 && (
+							<p className="text-xs">Showing first 500 decisions.</p>
+						)}
 					</div>
 				</div>
 			)}
