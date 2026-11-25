@@ -806,11 +806,11 @@ func (h *RebootHostHandler) ProcessTask(ctx context.Context, t *asynq.Task) erro
 // RunPatchHandler handles run_patch jobs.
 type RunPatchHandler struct {
 	remediationDB *database.DB
-	registry    *agentregistry.Registry
-	patchRuns   *store.PatchRunsStore
-	poolCache   *hostctx.PoolCache
-	queueClient *asynq.Client
-	log         *slog.Logger
+	registry      *agentregistry.Registry
+	patchRuns     *store.PatchRunsStore
+	poolCache     *hostctx.PoolCache
+	queueClient   *asynq.Client
+	log           *slog.Logger
 }
 
 // NewRunPatchHandler creates a run_patch handler.
@@ -970,27 +970,44 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 	var validation *db.GetPatchRunByIDRow
 	if run.ValidationRunID != nil {
 		validation, err = h.patchRuns.GetByID(ctx, *run.ValidationRunID)
-		if err != nil { return err }
-		if validation == nil { return h.patchRuns.FailRun(ctx, run.ID, "Validation record missing") }
+		if err != nil {
+			return err
+		}
+		if validation == nil {
+			return h.patchRuns.FailRun(ctx, run.ID, "Validation record missing")
+		}
 		_, linked, linkErr := remediation.ParseSnapshot(validation.PolicySnapshot)
 		if linkErr != nil || (linked && !managed) {
 			return h.patchRuns.FailRun(ctx, run.ID, "Managed validation snapshot missing or invalid")
 		}
 	}
-	if snapErr != nil { return h.patchRuns.FailRun(ctx, run.ID, "Invalid patch policy snapshot") }
+	if snapErr != nil {
+		return h.patchRuns.FailRun(ctx, run.ID, "Invalid patch policy snapshot")
+	}
 	if managed {
 		if h.remediationDB == nil || h.poolCache != nil || windows || run.HostID != snapshot.HostID ||
 			p.HostID != snapshot.HostID || p.DryRun != run.DryRun || run.PatchType != "patch_package" {
 			return h.patchRuns.FailRun(ctx, run.ID, "Unsupported remediation execution context")
 		}
-		if err := remediation.CheckDispatchIdentity(ctx,h.remediationDB,p.HostID,p.ApiID);err != nil {return h.patchRuns.FailRun(ctx,run.ID,"Remediation enrollment changed")}
+		if err := remediation.CheckDispatchIdentity(ctx, h.remediationDB, p.HostID, p.ApiID); err != nil {
+			return h.patchRuns.FailRun(ctx, run.ID, "Remediation enrollment changed")
+		}
 		now := time.Now().UTC()
 		conf, err := remediation.Recheck(ctx, h.remediationDB, snapshot, now, !run.DryRun)
-		if err != nil { return h.patchRuns.FailRun(ctx, run.ID, "Remediation safety gate: " + err.Error()) }
-		active,err:=remediation.ActiveCount(ctx,h.remediationDB,conf.PolicyID)
-		if err!=nil{return err}
-		total,err:=remediation.ActiveCount(ctx,h.remediationDB,"");if err!=nil{return err}
-		if active>conf.Policy.MaxConcurrent||total>5{return h.patchRuns.FailRun(ctx,run.ID,"Remediation concurrency limit changed")}
+		if err != nil {
+			return h.patchRuns.FailRun(ctx, run.ID, "Remediation safety gate: "+err.Error())
+		}
+		active, err := remediation.ActiveCount(ctx, h.remediationDB, conf.PolicyID)
+		if err != nil {
+			return err
+		}
+		total, err := remediation.ActiveCount(ctx, h.remediationDB, "")
+		if err != nil {
+			return err
+		}
+		if active > conf.Policy.MaxConcurrent || total > 5 {
+			return h.patchRuns.FailRun(ctx, run.ID, "Remediation concurrency limit changed")
+		}
 		if !run.DryRun {
 			// Approved validation becomes terminal approved. ValidateDryRun
 			// accepts only validated, so use a copy of the linked result after
