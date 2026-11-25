@@ -1,11 +1,11 @@
 module patchmon-agent
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/distribution/reference v0.6.0
 	github.com/go-resty/resty/v2 v2.17.2
-	github.com/gorilla/websocket v1.5.3
+	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
 	github.com/shirou/gopsutil/v4 v4.26.9
