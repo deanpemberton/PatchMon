@@ -21,15 +21,15 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
-      SOURCE_SHA: 000a119bc8b2ee80602c09351ee07d900481b6a2
-      SOURCE_TREE: d1b130ca1bd8982223b01f2920cbf98a3aa724a9
-      BUILD_VERSION: 2.1.9-rc.remediation.1
-      RELEASE_TAG: remediation-shadow-000a119bc8b2
-      CHECK_RUNS: "45708828445 45708828298 45708828394 45708828331"
+      SOURCE_SHA: 920c3f840d7576b61ef216d25e8557421d6136b5
+      SOURCE_TREE: 96d30e7424c37b3e02d1792ee5c2d810a0d1e901
+      BUILD_VERSION: 2.1.9-rc.remediation.2
+      RELEASE_TAG: remediation-shadow-920c3f840d75
+      CHECK_RUNS: "45715556603 45715556597 45715556682 45715556644"
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: 000a119bc8b2ee80602c09351ee07d900481b6a2
+          ref: 920c3f840d7576b61ef216d25e8557421d6136b5
           persist-credentials: false
       - name: Verify exact source and CI gates
         run: |
@@ -38,8 +38,21 @@ jobs:
           test "$(git rev-parse HEAD^{tree})" = "$SOURCE_TREE"
           for run in $CHECK_RUNS; do
             test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .head_sha)" = "$SOURCE_SHA"
-            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .conclusion)" = success
           done
+          for attempt in $(seq 1 40); do
+            pending=0
+            for run in $CHECK_RUNS; do
+              status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .status)
+              if test "$status" != completed; then
+                pending=1
+              else
+                test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .conclusion)" = success
+              fi
+            done
+            if test "$pending" = 0; then break; fi
+            sleep 20
+          done
+          test "$pending" = 0
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
         with:
           node-version-file: package.json
