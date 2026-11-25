@@ -12,6 +12,7 @@ import (
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/remediation"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -804,6 +805,7 @@ func (h *RebootHostHandler) ProcessTask(ctx context.Context, t *asynq.Task) erro
 
 // RunPatchHandler handles run_patch jobs.
 type RunPatchHandler struct {
+	remediationDB *database.DB
 	registry    *agentregistry.Registry
 	patchRuns   *store.PatchRunsStore
 	poolCache   *hostctx.PoolCache
@@ -961,7 +963,52 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 			return nil
 		}
 	}
-	msg, err := json.Marshal(buildRunPatchMessage(p, run, windows, pending))
+	message := buildRunPatchMessage(p, run, windows, pending)
+	snapshot, managed, snapErr := remediation.ParseSnapshot(run.PolicySnapshot)
+	// Even if an approval path lost its own snapshot, a linked managed
+	// validation run can never silently fall back to ordinary patch_package.
+	var validation *db.GetPatchRunByIDRow
+	if run.ValidationRunID != nil {
+		validation, err = h.patchRuns.GetByID(ctx, *run.ValidationRunID)
+		if err != nil { return err }
+		if validation == nil { return h.patchRuns.FailRun(ctx, run.ID, "Validation record missing") }
+		_, linked, linkErr := remediation.ParseSnapshot(validation.PolicySnapshot)
+		if linkErr != nil || (linked && !managed) {
+			return h.patchRuns.FailRun(ctx, run.ID, "Managed validation snapshot missing or invalid")
+		}
+	}
+	if snapErr != nil { return h.patchRuns.FailRun(ctx, run.ID, "Invalid patch policy snapshot") }
+	if managed {
+		if h.remediationDB == nil || h.poolCache != nil || windows || run.HostID != snapshot.HostID ||
+			p.HostID != snapshot.HostID || p.DryRun != run.DryRun || run.PatchType != "patch_package" {
+			return h.patchRuns.FailRun(ctx, run.ID, "Unsupported remediation execution context")
+		}
+		now := time.Now().UTC()
+		conf, err := remediation.Recheck(ctx, h.remediationDB, snapshot, now, !run.DryRun)
+		if err != nil { return h.patchRuns.FailRun(ctx, run.ID, "Remediation safety gate: " + err.Error()) }
+		if !run.DryRun {
+			// Approved validation becomes terminal approved. ValidateDryRun
+			// accepts only validated, so use a copy of the linked result after
+			// proving its actual database state and approval linkage.
+			if validation == nil || validation.Status != "approved" ||
+				(conf.Policy.Mode == remediation.ModeApproval && run.ApprovedByUserID == nil) {
+				return h.patchRuns.FailRun(ctx, run.ID, "Required remediation approval missing")
+			}
+			proof := *validation
+			proof.Status = "validated"
+			if err = remediation.ValidateDryRun(&proof, snapshot, now); err != nil {
+				return h.patchRuns.FailRun(ctx, run.ID, "Verified validation expired or invalid")
+			}
+		}
+		// Old agents reject this unknown explicit wire type rather than
+		// ignoring a new safety field and applying an ordinary upgrade.
+		message = map[string]interface{}{
+			"type": "run_patch", "patch_run_id": run.ID,
+			"patch_type": remediation.VerifiedPatchType, "dry_run": run.DryRun,
+			"verified_packages": snapshot.Packages, "reboot_if_required": false,
+		}
+	}
+	msg, err := json.Marshal(message)
 	if err != nil {
 		return err
 	}
