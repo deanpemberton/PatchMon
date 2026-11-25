@@ -96,7 +96,7 @@ func Verify(raw []byte,key ed25519.PublicKey,now time.Time)(Evidence,error) {
 		}
 		for _,f:=range h.ResolvedFindings {
 			k:=f.Package+"|"+f.Key
-			if !packagePattern.MatchString(f.Package)||!versionPattern.MatchString(f.Installed)||!(cvePattern.MatchString(f.Key)||(len(f.Key)<600&&len(f.Key)>8&&f.Key[:8]=="routine:"))||keys[k]{return Evidence{},errors.New("invalid or contradictory resolved finding")}
+			if !packagePattern.MatchString(f.Package)||!versionPattern.MatchString(f.Installed)||(!cvePattern.MatchString(f.Key)&&(len(f.Key)>=600||len(f.Key)<=8||f.Key[:8]!="routine:"))||keys[k]{return Evidence{},errors.New("invalid or contradictory resolved finding")}
 			keys[k]=true
 		}
 	}
@@ -109,7 +109,7 @@ func Read(now time.Time)(Evidence,error) {
 	if path==""||err!=nil||len(key)!=ed25519.PublicKeySize{return Evidence{},errors.New("signed evidence is not configured")}
 	info,err:=os.Lstat(path)
 	if err!=nil||!info.Mode().IsRegular()||info.Mode().Perm()&0022!=0||info.Size()>MaxEvidenceBytes{return Evidence{},errors.New("evidence file missing or insecure")}
-	f,err:=os.Open(path);if err!=nil{return Evidence{},err};defer f.Close()
+	f,err:=os.Open(path);if err!=nil{return Evidence{},err};defer func(){_ = f.Close()}()
 	raw,err:=io.ReadAll(io.LimitReader(f,MaxEvidenceBytes+1));if err!=nil{return Evidence{},err}
 	return Verify(raw,ed25519.PublicKey(key),now)
 }
