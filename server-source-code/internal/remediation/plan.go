@@ -182,7 +182,7 @@ func jsonNumber(i int64)string{raw,_:=json.Marshal(i);return string(raw)}
 // dispatch. It is also called on offline-agent retries, preventing stale plans.
 func Recheck(ctx context.Context,d *database.DB,s Snapshot,now time.Time,real bool)(Configuration,error) {
 	c,err:=ReadConfiguration(ctx,d,s.PolicyID);if err!=nil{return c,err}
-	if c.Revision!=s.Revision||c.Policy.Mode==ModeDisabled||c.Policy.Mode==ModeShadow||real&&!ExecutionEnabled(){return c,errors.New("remediation paused or changed")}
+	if c.DelayType!="immediate"||c.Revision!=s.Revision||c.Policy.Mode==ModeDisabled||c.Policy.Mode==ModeShadow||real&&!ExecutionEnabled(){return c,errors.New("remediation paused or changed")}
 	id,err:=ResolvePolicy(ctx,d,s.HostID);if err!=nil{return c,err};if id!=s.PolicyID{return c,errors.New("host no longer in effective scope")}
 	e,err:=Read(now);if err!=nil{return c,err}
 	h,ok:=FindHost(e,s.HostID);if !ok||!s.MatchesEvidence(h){return c,errors.New("current evidence no longer matches plan")}
