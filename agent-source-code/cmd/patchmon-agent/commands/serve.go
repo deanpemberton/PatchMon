@@ -516,7 +516,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					if runtime.GOOS == "windows" {
 						err = runPatchWindows(msg.patchRunID, msg.windowsPatch, msg.patchParseError)
 					} else {
-						err = runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun, msg.rebootIfRequired)
+						err = runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun, msg.rebootIfRequired, msg.verifiedTargets...)
 					}
 					switch {
 					case errors.Is(err, errPatchRunStopped):
@@ -1436,6 +1436,7 @@ type wsMsg struct {
 	// run_patch fields
 	patchRunID       string
 	patchType        string
+	verifiedTargets  []verifiedTarget
 	packageNames     []string
 	dryRun           bool
 	windowsPatch     packages.WindowsPatchRequest
@@ -1950,6 +1951,7 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 			// run_patch fields
 			PatchRunID       string                        `json:"patch_run_id"`
 			PatchType        string                        `json:"patch_type"`
+			VerifiedPackages []verifiedTarget              `json:"verified_packages"`
 			PackageName      string                        `json:"package_name"`
 			PackageNames     []string                      `json:"package_names"`
 			DryRun           bool                          `json:"dry_run"`
@@ -1994,8 +1996,21 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 			if patchType == "" {
 				patchType = "patch_all"
 			}
-			if patchType != "patch_all" && patchType != "patch_package" {
+			if patchType != "patch_all" && patchType != "patch_package" && patchType != verifiedPatchType {
 				logger.WithField("patch_type", logutil.Sanitize(patchType)).Warn("Invalid patch_type in run_patch")
+				continue
+			}
+			if patchType == verifiedPatchType {
+				if runtime.GOOS != "linux" || payload.RebootIfRequired || verifyTargetSyntax(payload.VerifiedPackages) != nil {
+					logger.Warn("Invalid verified patch request")
+					go rejectPatchRun(payload.PatchRunID, "Invalid verified patch request")
+					continue
+				}
+				dispatchWSMessage(out, wsMsg{
+					kind: "run_patch", patchRunID: payload.PatchRunID,
+					patchType: patchType, dryRun: payload.DryRun,
+					verifiedTargets: payload.VerifiedPackages,
+				})
 				continue
 			}
 			if runtime.GOOS == "windows" {
@@ -2687,7 +2702,7 @@ func patchTypeRefusal(pkgManager, patchType string, dryRun bool) string {
 // runPatch runs package manager update and upgrade (patch_all) or install (patch_package).
 // Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), pkg (FreeBSD), pacman (Arch),
 // apk (Alpine) and zypper (openSUSE, SLES). When dryRun is true, simulates and sends dry_run_completed instead of completed.
-func runPatch(patchRunID, patchType string, packageNames []string, dryRun, rebootIfRequired bool) error {
+func runPatch(patchRunID, patchType string, packageNames []string, dryRun, rebootIfRequired bool, verified ...verifiedTarget) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
@@ -2702,6 +2717,17 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun, reboo
 	})
 	pkgManager := packageMgr.DetectPackageManager()
 	aptDisableRetries := cfgManager.GetAptDisableRetries()
+	if patchType == verifiedPatchType {
+		if pkgManager != "apt" || rebootIfRequired || verifyTargetSyntax(verified) != nil {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "Verified patching requires valid APT targets and no reboot")
+			return errors.New("invalid verified patch configuration")
+		}
+		if !verifiedPatchLock.TryLock() {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "Another verified patch is active")
+			return errors.New("another verified patch is active")
+		}
+		defer verifiedPatchLock.Unlock()
+	}
 
 	if !slices.Contains([]string{"apt", "dnf", "yum", "pkg", "pacman", "apk", "zypper"}, pkgManager) {
 		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman, apk, zypper required)", pkgManager)
@@ -2783,6 +2809,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun, reboo
 		env = os.Environ()
 	}
 	env = append(env, "LC_MESSAGES=C")
+	if patchType == verifiedPatchType { env = append(env, "LC_ALL=C") }
 
 	if err := httpClient.SendPatchOutput(ctx, patchRunID, "started", "", ""); err != nil {
 		logger.WithError(err).Warn("Failed to send patch started to server")
@@ -2863,7 +2890,35 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun, reboo
 		}
 	}
 
-	if stepErr == nil && !ownRunner {
+	if stepErr == nil && patchType == verifiedPatchType {
+		var args []string
+		args, stepErr = verifiedAPTArguments(ctx, verified, aptDisableRetries)
+		if stepErr == nil {
+			if err, abort := runStep(false, "verified apt simulation", "verified apt simulation failed: %w", "apt-get", append([]string{"-s"}, args...)...); abort {
+				stepErr = err
+			} else {
+				stepErr = verifyAPTTransaction(lastStepOutput, verified)
+			}
+		}
+		if stepErr == nil && dryRun {
+			sink.WriteString("\n" + verifiedPlanMarker + verifiedDigest(verified) + "\n")
+		}
+		if stepErr == nil && !dryRun {
+			var hook string
+			var cleanup func()
+			hook, cleanup, stepErr = makeVerifiedAPTHook(verified)
+			if stepErr == nil {
+				defer cleanup()
+				args = append([]string{"-o", "DPkg::Pre-Install-Pkgs::=" + hook}, args...)
+				if err, abort := runStep(false, "verified apt install", "verified apt install failed: %w", "apt-get", args...); abort {
+					stepErr = err
+				} else {
+					stepErr = verifyInstalledTargets(ctx, verified)
+				}
+			}
+		}
+	}
+	if stepErr == nil && !ownRunner && patchType != verifiedPatchType {
 		if patchType == "patch_all" {
 			switch pkgManager {
 			case "apt":
