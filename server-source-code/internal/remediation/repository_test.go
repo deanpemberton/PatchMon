@@ -38,7 +38,7 @@ func TestMigrationAndRemediationRepository(t *testing.T) {
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	exec("INSERT INTO users(id,username,email,role,updated_at) VALUES('fixture-owner','fixture-owner','fixture-owner' || chr(64) || 'example.invalid','admin',NOW())")
-	exec("INSERT INTO hosts(id,friendly_name,os_type,os_version,updated_at,api_id,api_key,package_manager,last_update,last_full_report_at,identity_fingerprint,packages_hash) VALUES('fixture-host','Example host','Debian','13',NOW(),'fixture-enrollment','fixture-not-a-secret','apt',$1,$1,'fixture-identity','fixture-hash')", now)
+	exec("INSERT INTO hosts(id,friendly_name,os_type,os_version,updated_at,api_id,api_key,package_manager,last_update,last_full_report_at,identity_fingerprint,packages_hash) VALUES('fixture-host','Example host','Debian','13',NOW(),'fixture-enrollment','fixture-not-a-secret','apt',$1,$1,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')", now)
 	exec("INSERT INTO packages(id,name,updated_at) VALUES('fixture-package','example-bin',NOW())")
 	exec("INSERT INTO host_packages(id,host_id,package_id,current_version,available_version,needs_update,is_security_update,last_checked) VALUES('fixture-host-package','fixture-host','fixture-package','1.0-1','1.0-2',true,true,$1)", now)
 	exec("INSERT INTO patch_policies(id,name,patch_delay_type,updated_at) VALUES('fixture-policy','Example policy','immediate',NOW())")
@@ -78,8 +78,8 @@ func TestMigrationAndRemediationRepository(t *testing.T) {
 	}
 	score := 9.8
 	h := HostEvidence{
-		HostID: "fixture-host", IdentityFingerprint: "fixture-identity",
-		OS: "Debian", OSVersion: "13", PackagesHash: "fixture-hash", ObservedAt: now,
+		HostID: "fixture-host", IdentityFingerprint: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		OS: "Debian", OSVersion: "13", PackagesHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ObservedAt: now,
 		BackupAt: now.Add(-time.Hour), BackupComplete: true, RecoveryVerified: true, ApplicationHealthy: true,
 		Targets: []Target{{
 			Package: "example-bin", Installed: "1.0-1", Candidate: "1.0-2",
