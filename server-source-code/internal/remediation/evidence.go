@@ -35,6 +35,7 @@ type HostEvidence struct {
 	ApplicationHealthy bool `json:"application_healthy"`
 	Targets []Target `json:"targets"`
 	ResolvedFindings []ResolvedFinding `json:"resolved_findings,omitempty"`
+	UnclassifiedSecurityUpdates []string `json:"unclassified_security_updates,omitempty"`
 }
 
 // ResolvedFinding is a positive vendor-specific reassessment, not an absent row.
@@ -81,9 +82,10 @@ func Verify(raw []byte,key ed25519.PublicKey,now time.Time)(Evidence,error) {
 	if result.Schema!=1||!Fresh(result.GeneratedAt,now,MaxEvidenceAge)||len(result.Hosts)>10000{return result,errors.New("stale or invalid evidence")}
 	seen:=map[string]bool{}
 	for _,h:=range result.Hosts {
-		if h.HostID==""||len(h.HostID)>128||seen[h.HostID]||len(h.Targets)>10000||len(h.ResolvedFindings)>10000{return Evidence{},errors.New("invalid or duplicate evidence host")}
+		if h.HostID==""||len(h.HostID)>128||seen[h.HostID]||len(h.Targets)>10000||len(h.ResolvedFindings)>10000||len(h.UnclassifiedSecurityUpdates)>10000{return Evidence{},errors.New("invalid or duplicate evidence host")}
 		seen[h.HostID]=true
 		keys:=map[string]bool{}
+		for _,name:=range h.UnclassifiedSecurityUpdates {if !packagePattern.MatchString(name)||keys[name]{return Evidence{},errors.New("invalid unclassified update")};keys[name]=true}
 		for _,t:=range h.Targets {
 			if err:=t.Validate();err!=nil{return Evidence{},fmt.Errorf("invalid evidence target: %w",err)}
 			k:=t.CVE
