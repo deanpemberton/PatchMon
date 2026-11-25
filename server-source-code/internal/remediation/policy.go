@@ -28,37 +28,7 @@ const (
 var (
 	cvePattern = regexp.MustCompile("^CVE-[0-9]{4}-[0-9]{4,}$")
 	packagePattern = regexp.MustCompile("^[a-z0-9][a-z0-9+.-]{0,127}(:[a-z0-9][a-z0-9-]{0,31})?$")
-	versionPattern = regexp.MustCompile(`^[0-9][A-Za-z0-9.+:~\-]{0,255}// Package remediation evaluates vulnerability-driven patch policies. Evidence is
-// supplied by a trusted inventory/advisory adapter, not inferred from package names.
-package remediation
-
-import (
-	"errors"
-	"math"
-	"regexp"
-	"sort"
-	"time"
-)
-
-const (
-	ModeDisabled = "disabled"
-	ModeShadow = "shadow"
-	ModeApproval = "approval"
-	ModeAutomatic = "automatic"
-	SeverityUnknown = "unknown"
-	SeverityNone = "none"
-	SeverityRoutine = "routine"
-	SeverityLow = "low"
-	SeverityMedium = "medium"
-	SeverityHigh = "high"
-	SeverityCritical = "critical"
-	SeverityExploited = "exploited"
-)
-
-var (
-	cvePattern = regexp.MustCompile("^CVE-[0-9]{4}-[0-9]{4,}$")
-	packagePattern = regexp.MustCompile("^[a-z0-9][a-z0-9+.-]{0,127}(:[a-z0-9][a-z0-9-]{0,31})?$")
-	versionPattern = )
+	versionPattern = regexp.MustCompile(`^[0-9][A-Za-z0-9.+:~-]{0,255}$`)
 )
 
 type Policy struct {
