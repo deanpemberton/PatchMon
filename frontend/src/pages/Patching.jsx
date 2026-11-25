@@ -1654,7 +1654,7 @@ function PoliciesTab() {
 															})
 														}
 													/>
-														<RemediationPolicy policy={policy} hosts={hosts} />
+													<RemediationPolicy policy={policy} hosts={hosts} />
 												</td>
 											</tr>
 										)}
