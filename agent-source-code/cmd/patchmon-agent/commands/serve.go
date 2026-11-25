@@ -2809,7 +2809,9 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun, reboo
 		env = os.Environ()
 	}
 	env = append(env, "LC_MESSAGES=C")
-	if patchType == verifiedPatchType { env = append(env, "LC_ALL=C") }
+	if patchType == verifiedPatchType {
+		env = append(env, "LC_ALL=C")
+	}
 
 	if err := httpClient.SendPatchOutput(ctx, patchRunID, "started", "", ""); err != nil {
 		logger.WithError(err).Warn("Failed to send patch started to server")
