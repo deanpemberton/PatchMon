@@ -61,6 +61,7 @@ func (h *AutoPatchDispatchHandler) evaluateRemediationHost(ctx context.Context,c
 	effective,err:=h.policies.ResolveEffectivePolicy(ctx,hostID);if err!=nil{return err}
 	if id!=c.PolicyID||effective==nil||effective.ID!=id{row.Blocker="outside_effective_policy";return nil}
 	ev,ok:=remediation.FindHost(e,hostID);if !ok{row.Blocker="missing_host_evidence";return nil}
+	row.UnclassifiedSecurityUpdates=ev.UnclassifiedSecurityUpdates
 	if !remediation.Fresh(ev.ObservedAt,now,remediation.MaxEvidenceAge){row.Blocker="stale_host_evidence";return nil}
 	if err=remediation.CheckEvidenceIdentity(ctx,h.db,ev,now);err!=nil{row.Blocker=err.Error();return nil}
 	last,err:=remediation.LastRoutine(ctx,h.db,c.PolicyID,hostID);if err!=nil{return err}
