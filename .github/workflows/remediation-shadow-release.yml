@@ -21,15 +21,15 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
-      SOURCE_SHA: 920c3f840d7576b61ef216d25e8557421d6136b5
-      SOURCE_TREE: 96d30e7424c37b3e02d1792ee5c2d810a0d1e901
-      BUILD_VERSION: 2.1.9-rc.remediation.2
-      RELEASE_TAG: remediation-shadow-920c3f840d75
-      CHECK_RUNS: "45715556603 45715556597 45715556682 45715556644"
+      SOURCE_SHA: 98a6dcf92c4aeb6a4ea10117787b64933f72c0c9
+      SOURCE_TREE: ec30c75d709d1367195122adca383b53fa43e095
+      BUILD_VERSION: 2.1.9-rc.remediation.3
+      RELEASE_TAG: remediation-shadow-98a6dcf92c4a
+      CHECK_RUNS: "45718822962 45718822907 45718823040 45718823036"
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: 920c3f840d7576b61ef216d25e8557421d6136b5
+          ref: 98a6dcf92c4aeb6a4ea10117787b64933f72c0c9
           persist-credentials: false
       - name: Verify exact source and CI gates
         run: |
