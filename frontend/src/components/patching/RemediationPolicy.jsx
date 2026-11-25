@@ -56,7 +56,7 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 	];
 	return (
 		<form onSubmit={save} className="space-y-3">
-			<p className="text-sm text-secondary-500">
+			<p className="text-sm text-secondary-600 dark:text-secondary-300">
 				Requires an immediate patch policy, signed advisory evidence, tested
 				recovery, and a compatible APT agent. Unknown severity is never treated
 				as low.
@@ -66,7 +66,7 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 			</label>
 			<select
 				id={prefix + "-mode"}
-				className="input-field w-full"
+				className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2 disabled:opacity-60 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
 				value={form.mode}
 				disabled={!canEdit}
 				onChange={(event) => change("mode", event.target.value)}
@@ -82,7 +82,7 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 				))}
 			</select>
 			{!executionEnabled && (
-				<p className="text-sm text-amber-600">
+				<p className="text-sm text-amber-700 dark:text-amber-300">
 					Server execution switch is off. No managed upgrade can execute.
 				</p>
 			)}
@@ -94,7 +94,7 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 						</label>
 						<input
 							id={prefix + key}
-							className="input-field w-full"
+							className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2 disabled:opacity-60 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
 							type="number"
 							min={min}
 							max={max}
@@ -161,7 +161,7 @@ export default function RemediationPolicy({ policy, hosts }) {
 		return <p className="p-4 text-sm">Loading remediation policy...</p>;
 	if (isError || !data?.configuration)
 		return (
-			<p className="p-4 text-sm text-amber-600">
+			<p className="p-4 text-sm text-amber-700 dark:text-amber-300">
 				Remediation settings unavailable.
 			</p>
 		);
@@ -204,7 +204,7 @@ export default function RemediationPolicy({ policy, hosts }) {
 						Open: {report.open_findings} · Overdue: {report.overdue_findings} ·
 						Unobserved: {report.unobserved_findings}
 					</p>
-					<p className="text-xs text-secondary-500">
+					<p className="text-xs text-secondary-600 dark:text-secondary-300">
 						{new Date(report.evaluated_at).toLocaleString()} ·{" "}
 						{report.reason ||
 							(report.evidence_available
@@ -212,7 +212,7 @@ export default function RemediationPolicy({ policy, hosts }) {
 								: "Evidence unavailable")}
 					</p>
 					{unclassified.length > 0 && (
-						<details className="text-sm text-amber-600">
+						<details className="text-sm text-amber-700 dark:text-amber-300">
 							<summary>
 								{unclassified.length} unclassified security updates (manual
 								review)
