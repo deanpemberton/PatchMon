@@ -89,6 +89,7 @@ type HostReport struct {
 	Decisions []Decision `json:"decisions"`
 	Blocker string `json:"blocker,omitempty"`
 	RunID string `json:"run_id,omitempty"`
+	UnclassifiedSecurityUpdates []string `json:"unclassified_security_updates,omitempty"`
 }
 
 func SaveReport(ctx context.Context,d *database.DB,c Configuration,r Report) error {
@@ -158,6 +159,14 @@ func ResolvePolicy(ctx context.Context,d *database.DB,hostID string)(string,erro
 
 // CheckHost binds evidence to live enrollment identity, package snapshot and
 // exact package candidates. It performs no network or package operation.
+func CheckDispatchIdentity(ctx context.Context,d *database.DB,hostID,apiID string) error {
+	tx,err:=d.Begin(ctx);if err!=nil{return err}
+	defer func(){_=tx.Rollback(context.WithoutCancel(ctx))}()
+	var match bool
+	if err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM hosts WHERE id=$1 AND api_id=$2 AND identity_conflict_at IS NULL)",hostID,apiID).Scan(&match);err!=nil{return err}
+	if !match{return errors.New("dispatch enrollment identity changed")};return nil
+}
+
 func CheckHost(ctx context.Context,d *database.DB,h HostEvidence,pkgs []VerifiedPackage,now time.Time,p Policy) error {
 	if !h.Safe(now,p){return errors.New("backup, recovery, health or evidence freshness gate")}
 	tx,err:=d.Begin(ctx);if err!=nil{return err}
