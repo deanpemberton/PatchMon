@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/remediation"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -82,6 +84,14 @@ func autoPatchDueSlot(p db.PatchPolicy, now time.Time, loc *time.Location) (time
 
 // ProcessTask implements asynq.Handler.
 func (h *AutoPatchDispatchHandler) ProcessTask(ctx context.Context, _ *asynq.Task) error {
+	if err := h.processRemediation(ctx); err != nil {
+		return err
+	}
+	// Legacy full-upgrade schedules are an independent explicit opt-in.
+	// A severity policy cannot fall through to an unrestricted full upgrade.
+	if os.Getenv("PATCHMON_LEGACY_AUTO_PATCH_EXECUTION") != "true" {
+		return nil
+	}
 	policies, err := h.policies.ListAutoPatchEnabled(ctx)
 	if err != nil {
 		h.log.Error("auto_patch: list policies failed", "error", err)
@@ -105,6 +115,9 @@ func (h *AutoPatchDispatchHandler) ProcessTask(ctx context.Context, _ *asynq.Tas
 
 	var activeHosts map[string]struct{}
 	for _, p := range policies {
+		c, err := remediation.ReadConfiguration(ctx, h.db, p.ID)
+		if err != nil { return err }
+		if c.Policy.Mode != remediation.ModeDisabled { continue }
 		slot, due := autoPatchDueSlot(p, now, loc)
 		if !due {
 			continue
@@ -119,8 +132,8 @@ func (h *AutoPatchDispatchHandler) ProcessTask(ctx context.Context, _ *asynq.Tas
 
 		if activeHosts == nil {
 			if activeHosts, err = h.patchRuns.HostIDsWithActiveRuns(ctx); err != nil {
-				h.log.Warn("auto_patch: active-run lookup failed; proceeding without dedup", "error", err)
-				activeHosts = map[string]struct{}{}
+				h.log.Warn("auto_patch: active-run lookup failed; refusing dispatch", "error", err)
+				return err
 			}
 		}
 
@@ -182,6 +195,7 @@ func (h *AutoPatchDispatchHandler) ProcessTask(ctx context.Context, _ *asynq.Tas
 			}
 			if _, qErr := h.queueClient.Enqueue(task); qErr != nil {
 				h.log.Error("auto_patch: enqueue failed", "policy", p.Name, "host_id", host.ID, "error", qErr)
+				_, _ = h.patchRuns.Cancel(context.WithoutCancel(ctx), runID, "Failed to queue scheduled patch")
 				continue
 			}
 			activeHosts[host.ID] = struct{}{}
