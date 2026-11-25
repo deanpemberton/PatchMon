@@ -9,6 +9,32 @@ permissions:
   contents: read
 
 jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: server-source-code/go.mod
+          cache: false
+      - name: Check formatting
+        run: |
+          gofmt -w server-source-code/internal/remediation/*.go \
+            server-source-code/internal/handler/remediation.go \
+            server-source-code/internal/handler/patching.go \
+            server-source-code/internal/queue/severity_remediation.go \
+            server-source-code/internal/queue/auto_patch_worker.go \
+            server-source-code/internal/queue/jobs.go \
+            server-source-code/internal/queue/server.go \
+            server-source-code/internal/server/router.go \
+            agent-source-code/cmd/patchmon-agent/commands/verified_patch*.go \
+            agent-source-code/cmd/patchmon-agent/commands/serve.go
+          if ! git diff --quiet; then
+            git diff --no-color
+            exit 1
+          fi
   evidence:
     runs-on: ubuntu-latest
     steps:
