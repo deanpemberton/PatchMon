@@ -9,11 +9,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+var verifiedPatchLock sync.Mutex
 
 const verifiedPatchType = "patch_package_verified"
 const verifiedPlanMarker = "PATCHMON_VERIFIED_PLAN "
@@ -125,4 +129,47 @@ func verifyInstalledTargets(ctx context.Context,targets []verifiedTarget)error {
 		if err!=nil||v!=t.Candidate{return fmt.Errorf("post-install version mismatch for %s",t.Name)}
 	}
 	return nil
+}
+
+// The APT pre-install hook is a second gate executed while apt owns its
+// transaction locks. It inspects the actual .deb archives, not merely the
+// previous simulation. An unexpected dependency or changed installed version
+// aborts before dpkg installs the archives. The command and script are fixed;
+// only validated TSV data is passed to the private manifest.
+const verifiedHook = `#!/bin/sh
+set -eu
+manifest="${0%/*}/targets.tsv"
+tab=$(printf '\t')
+count=0
+while IFS= read -r archive; do
+    case "$archive" in /*) ;; *) exit 1 ;; esac
+    test -f "$archive"
+    package=$(/usr/bin/dpkg-deb --field "$archive" Package)
+    version=$(/usr/bin/dpkg-deb --field "$archive" Version)
+    arch=$(/usr/bin/dpkg-deb --field "$archive" Architecture)
+    matched=0
+    while IFS="$tab" read -r name installed candidate; do
+        case "$name" in "$package"|"$package:$arch") ;; *) continue ;; esac
+        test "$version" = "$candidate"
+        actual=$(/usr/bin/dpkg-query -W -f='${Version}\t${Status}' "$name")
+        test "$actual" = "$(printf '%s\tinstall ok installed' "$installed")"
+        matched=$((matched + 1))
+    done < "$manifest"
+    test "$matched" -eq 1
+    count=$((count + 1))
+done
+test "$count" -gt 0
+`
+
+func makeVerifiedAPTHook(targets []verifiedTarget)(string,func(),error) {
+	if err:=verifyTargetSyntax(targets);err!=nil{return "",nil,err}
+	// Fixed trusted base path; no caller-provided shell syntax or path.
+	dir,err:=os.MkdirTemp("/run","patchmon-verified-");if err!=nil{return "",nil,err}
+	cleanup:=func(){_=os.RemoveAll(dir)}
+	var b strings.Builder
+	for _,t:=range targets {fmt.Fprintf(&b,"%s\t%s\t%s\n",t.Name,t.Installed,t.Candidate)}
+	if err=os.WriteFile(filepath.Join(dir,"targets.tsv"),[]byte(b.String()),0600);err!=nil{cleanup();return "",nil,err}
+	hook:=filepath.Join(dir,"guard")
+	if err=os.WriteFile(hook,[]byte(verifiedHook),0700);err!=nil{cleanup();return "",nil,err}
+	return hook,cleanup,nil
 }
