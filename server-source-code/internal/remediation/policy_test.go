@@ -6,7 +6,7 @@ import (
 )
 
 func TestSeverityBoundariesAndKEV(t *testing.T) {
-	for _,tc:=range []struct{score float64;want string}{{0,SeverityLow},{3.9,SeverityLow},{4,SeverityMedium},{6.9,SeverityMedium},{7,SeverityHigh},{8.9,SeverityHigh},{9,SeverityCritical},{10,SeverityCritical},{11,SeverityUnknown}} {
+	for _,tc:=range []struct{score float64;want string}{{0,SeverityNone},{3.9,SeverityLow},{4,SeverityMedium},{6.9,SeverityMedium},{7,SeverityHigh},{8.9,SeverityHigh},{9,SeverityCritical},{10,SeverityCritical},{11,SeverityUnknown}} {
 		x:=Target{Security:true,Score:&tc.score}
 		if got:=Severity(x);got!=tc.want {t.Fatalf("score %v: got %s, want %s",tc.score,got,tc.want)}
 	}
@@ -18,7 +18,7 @@ func TestEvaluateDeadlineAndGates(t *testing.T) {
 	now:=time.Date(2025,1,1,12,0,0,0,time.UTC)
 	p:=DefaultPolicy();p.Mode=ModeShadow
 	score:=9.5
-	x:=Target{Package:"example-package",Installed:"1.0-1",Candidate:"1.0-2",CVE:"CVE-2099-12345",Score:&score,ScoreSource:"fixture",ScoreVersion:"3.1",Security:true,VendorApplicable:true,FixedCandidateVerified:true,FirstSeen:now.Add(-time.Hour)}
+	x:=Target{Package:"example-package",Installed:"1.0-1",Candidate:"1.0-2",CVE:"CVE-2099-12345",SourcePackage:"example-package",InstalledSourceVersion:"1.0-1",CandidateSourceVersion:"1.0-2",FixedSourceVersion:"1.0-2",AdvisorySource:"fixture",Score:&score,ScoreSource:"fixture",ScoreVersion:"3.1",Security:true,VendorApplicable:true,FixedCandidateVerified:true,FirstSeen:now.Add(-time.Hour)}
 	d:=Evaluate(p,x,now,time.Time{})
 	if !d.Eligible || d.Overdue || d.Deadline==nil || !d.Deadline.Equal(now.Add(3*time.Hour)) {t.Fatalf("unexpected decision %+v",d)}
 	x.FirstSeen=now.Add(-5*time.Hour)
