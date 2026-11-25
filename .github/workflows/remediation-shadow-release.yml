@@ -1,0 +1,88 @@
+name: Build versioned remediation shadow candidate
+
+on:
+  push:
+    branches: [ci/remediation-artifact-publisher]
+    paths:
+      - .github/workflows/remediation-shadow-release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: remediation-shadow-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: 000a119bc8b2ee80602c09351ee07d900481b6a2
+      SOURCE_TREE: d1b130ca1bd8982223b01f2920cbf98a3aa724a9
+      BUILD_VERSION: 2.1.9-rc.remediation.1
+      RELEASE_TAG: remediation-shadow-000a119bc8b2
+      CHECK_RUNS: "45708828445 45708828298 45708828394 45708828331"
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: 000a119bc8b2ee80602c09351ee07d900481b6a2
+          persist-credentials: false
+      - name: Verify exact source and CI gates
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$SOURCE_TREE"
+          for run in $CHECK_RUNS; do
+            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .head_sha)" = "$SOURCE_SHA"
+            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .conclusion)" = success
+          done
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version-file: package.json
+          cache: npm
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: server-source-code/go.mod
+          cache-dependency-path: |
+            server-source-code/go.sum
+            agent-source-code/go.sum
+      - name: Build embedded frontend and versioned binaries
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build --workspace=frontend
+          mkdir -p server-source-code/cmd/server/static/frontend release
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
+          (
+            cd server-source-code
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -buildvcs=false -trimpath \
+              -ldflags "-X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=$BUILD_VERSION" -o ../release/patchmon-server ./cmd/server
+          )
+          (
+            cd agent-source-code
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -buildvcs=false -trimpath \
+              -ldflags "-X patchmon-agent/internal/pkgversion.Version=$BUILD_VERSION" -o ../release/patchmon-agent ./cmd/patchmon-agent
+          )
+          test -z "$(git status --porcelain --untracked-files=no)"
+          printf '%s\n' "$SOURCE_SHA" > release/BUILD_COMMIT
+          (cd release; sha256sum patchmon-server patchmon-agent BUILD_COMMIT > SHA256SUMS)
+          python3 - <<'PY'
+          import json, os, pathlib
+          root=pathlib.Path("release")
+          assets={name:digest for digest,name in (line.split() for line in (root/"SHA256SUMS").read_text().splitlines())}
+          manifest=dict(schema=1,source_commit=os.environ["SOURCE_SHA"],source_tree=os.environ["SOURCE_TREE"],build_commit=os.environ["SOURCE_SHA"],build_version=os.environ["BUILD_VERSION"],build_run=int(os.environ["GITHUB_RUN_ID"]),verified_workflow_runs=[int(x) for x in os.environ["CHECK_RUNS"].split()],asset_sha256=assets,purpose="shadow-release-candidate")
+          (root/"RELEASE_PROVENANCE.json").write_text(json.dumps(manifest,sort_keys=True,indent=2)+"\n")
+          PY
+      - name: Publish versioned prerelease
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then exit 1; fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then exit 1; fi
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --prerelease \
+            --title "Severity-aware remediation shadow candidate $BUILD_VERSION" \
+            --notes "Versioned build of the exact CI-validated source. For controlled shadow deployment and isolated agent testing; not an upstream release or authorization to execute patches." \
+            release/patchmon-server release/patchmon-agent release/BUILD_COMMIT release/SHA256SUMS release/RELEASE_PROVENANCE.json
