@@ -29,12 +29,12 @@ const autoPatchFireTolerance = 30 * time.Minute
 // the auto_patch_last_run_at stamp.
 type AutoPatchDispatchHandler struct {
 	singleTenant bool
-	policies    *store.PatchPoliciesStore
-	patchRuns   *store.PatchRunsStore
-	hosts       *store.HostsStore
-	db          *database.DB
-	queueClient *asynq.Client
-	log         *slog.Logger
+	policies     *store.PatchPoliciesStore
+	patchRuns    *store.PatchRunsStore
+	hosts        *store.HostsStore
+	db           *database.DB
+	queueClient  *asynq.Client
+	log          *slog.Logger
 }
 
 // NewAutoPatchDispatchHandler creates the dispatcher.
@@ -119,8 +119,12 @@ func (h *AutoPatchDispatchHandler) ProcessTask(ctx context.Context, _ *asynq.Tas
 	var activeHosts map[string]struct{}
 	for _, p := range policies {
 		c, err := remediation.ReadConfiguration(ctx, h.db, p.ID)
-		if err != nil { return err }
-		if c.Policy.Mode != remediation.ModeDisabled { continue }
+		if err != nil {
+			return err
+		}
+		if c.Policy.Mode != remediation.ModeDisabled {
+			continue
+		}
 		slot, due := autoPatchDueSlot(p, now, loc)
 		if !due {
 			continue
