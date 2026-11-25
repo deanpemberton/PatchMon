@@ -154,10 +154,16 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeRunScan, wrap(TypeRunScan, NewRunScanHandler(registry, db, opts.PoolCache, complianceStore, integrationStatusStore, log)))
 	mux.Handle(TypeInstallComplianceTools, wrap(TypeInstallComplianceTools, NewInstallComplianceToolsHandler(registry, db, opts.PoolCache, opts.RDB, opts.RedisCache, log)))
 	patchRunsStore := store.NewPatchRunsStore(&hostctx.DBResolver{Default: db})
-	mux.Handle(TypeRunPatch, wrap(TypeRunPatch, NewRunPatchHandler(registry, patchRunsStore, opts.PoolCache, opts.QueueClient, log)))
+	runPatchHandler := NewRunPatchHandler(registry, patchRunsStore, opts.PoolCache, opts.QueueClient, log)
+	if opts.PoolCache == nil {
+		runPatchHandler.remediationDB = db
+	}
+	mux.Handle(TypeRunPatch, wrap(TypeRunPatch, runPatchHandler))
 	patchPoliciesStore := store.NewPatchPoliciesStore(dbResolver)
 	hostsStoreForAutoPatch := store.NewHostsStore(dbResolver)
-	mux.Handle(TypeAutoPatchDispatch, wrap(TypeAutoPatchDispatch, NewAutoPatchDispatchHandler(patchPoliciesStore, patchRunsStore, hostsStoreForAutoPatch, db, opts.QueueClient, log)))
+	autoPatch := NewAutoPatchDispatchHandler(patchPoliciesStore, patchRunsStore, hostsStoreForAutoPatch, db, opts.QueueClient, log)
+	autoPatch.singleTenant = opts.PoolCache == nil
+	mux.Handle(TypeAutoPatchDispatch, wrap(TypeAutoPatchDispatch, autoPatch))
 	mux.Handle(TypeMetricsSend, wrap(TypeMetricsSend, NewMetricsSendHandler(db, opts.PoolCache, opts.ServerVersion, log)))
 	return mux
 }
