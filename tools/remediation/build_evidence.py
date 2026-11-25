@@ -242,6 +242,7 @@ def make_host(host, debian, ubuntu, kev, now):
         raise ValueError("unsupported vendor")
     if (distribution == "debian" and not debian) or (distribution == "ubuntu" and not ubuntu):
         raise ValueError("required vendor feed unavailable")
+    tracked = {(r["package"], r["key"]) for r in host.get("tracked_findings", [])}
     seen = set()
     for pkg in host["packages"]:
         name, installed = pkg["name"], pkg["installed"]
@@ -276,7 +277,8 @@ def make_host(host, debian, ubuntu, kev, now):
         affected = False
         for cve, status, fixed, vendor in merged.values():
             if status == "not_affected" or (status == "fixed" and version_cmp(source_version, "ge", fixed)):
-                result["resolved_findings"].append({"package": name, "key": cve, "installed": installed})
+                if (name, cve) in tracked:
+                    result["resolved_findings"].append({"package": name, "key": cve, "installed": installed})
                 continue
             affected = True
             verified = bool(status == "fixed" and provenance
