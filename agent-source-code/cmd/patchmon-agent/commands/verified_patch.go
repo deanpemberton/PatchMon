@@ -24,33 +24,7 @@ const verifiedPlanMarker = "PATCHMON_VERIFIED_PLAN "
 
 var (
 	verifiedNamePattern    = regexp.MustCompile("^[a-z0-9][a-z0-9+.-]{0,127}(:[a-z0-9][a-z0-9-]{0,31})?$")
-	verifiedVersionPattern = regexp.MustCompile(`^[0-9][A-Za-z0-9.+:~\-]{0,255}package commands
-
-import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
-	"sync"
-)
-
-var verifiedPatchLock sync.Mutex
-
-const verifiedPatchType = "patch_package_verified"
-const verifiedPlanMarker = "PATCHMON_VERIFIED_PLAN "
-
-var (
-	verifiedNamePattern    = regexp.MustCompile("^[a-z0-9][a-z0-9+.-]{0,127}(:[a-z0-9][a-z0-9-]{0,31})?$")
-	verifiedVersionPattern = )
+	verifiedVersionPattern = regexp.MustCompile(`^[0-9][A-Za-z0-9.+:~-]{0,255}$`)
 	verifiedInstallPattern = regexp.MustCompile(`^Inst ([^ ]+) \[([^]]+)\] \(([^ )]+)(?: |\))`)
 	verifiedSummaryPattern = regexp.MustCompile(`^([0-9]+) upgraded, ([0-9]+) newly installed, ([0-9]+) to remove and [0-9]+ not upgraded\.?$`)
 )
