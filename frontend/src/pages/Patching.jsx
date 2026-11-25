@@ -34,6 +34,7 @@ import {
 import { CompactPackageSummary } from "../components/PackageListDisplay";
 import { PatchRunStatusBadge } from "../components/PatchRunStatusBadge";
 import PatchWizard from "../components/PatchWizard";
+import RemediationPolicy from "../components/patching/RemediationPolicy";
 import {
 	PatchingActivePolicies,
 	PatchingPendingApproval,
@@ -1653,6 +1654,7 @@ function PoliciesTab() {
 															})
 														}
 													/>
+														<RemediationPolicy policy={policy} hosts={hosts} />
 												</td>
 											</tr>
 										)}
