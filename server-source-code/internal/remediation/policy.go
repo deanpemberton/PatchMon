@@ -16,6 +16,7 @@ const (
 	ModeApproval = "approval"
 	ModeAutomatic = "automatic"
 	SeverityUnknown = "unknown"
+	SeverityNone = "none"
 	SeverityRoutine = "routine"
 	SeverityLow = "low"
 	SeverityMedium = "medium"
@@ -74,6 +75,11 @@ type Target struct {
 	Package string `json:"package"`
 	Installed string `json:"installed"`
 	Candidate string `json:"candidate"`
+	SourcePackage string `json:"source_package,omitempty"`
+	InstalledSourceVersion string `json:"installed_source_version,omitempty"`
+	CandidateSourceVersion string `json:"candidate_source_version,omitempty"`
+	FixedSourceVersion string `json:"fixed_source_version,omitempty"`
+	AdvisorySource string `json:"advisory_source,omitempty"`
 	CVE string `json:"cve,omitempty"`
 	Score *float64 `json:"score,omitempty"`
 	ScoreSource string `json:"score_source,omitempty"`
@@ -86,11 +92,12 @@ type Target struct {
 }
 
 func (t Target) Validate() error {
-	if !packagePattern.MatchString(t.Package) || !versionPattern.MatchString(t.Installed) || !versionPattern.MatchString(t.Candidate) || t.Installed == t.Candidate || t.FirstSeen.IsZero() {
+	if !packagePattern.MatchString(t.Package) || !versionPattern.MatchString(t.Installed) || t.FirstSeen.IsZero() || (t.Candidate!=""&&(!versionPattern.MatchString(t.Candidate)||t.Installed==t.Candidate)) || (t.Candidate==""&&(!t.Security||t.FixedCandidateVerified)) {
 		return errors.New("invalid target")
 	}
 	if t.Security {
 		if !cvePattern.MatchString(t.CVE) { return errors.New("invalid security finding identifier") }
+		if t.FixedCandidateVerified && (!packagePattern.MatchString(t.SourcePackage)||!versionPattern.MatchString(t.InstalledSourceVersion)||!versionPattern.MatchString(t.CandidateSourceVersion)||!versionPattern.MatchString(t.FixedSourceVersion)||t.AdvisorySource==""){return errors.New("missing source-package provenance")}
 	} else if t.CVE != "" || t.Score != nil || t.KnownExploited {
 		return errors.New("routine target carries security metadata")
 	}
@@ -105,6 +112,7 @@ func Severity(t Target) string {
 	if t.KnownExploited { return SeverityExploited }
 	if t.Score == nil || math.IsNaN(*t.Score) || math.IsInf(*t.Score,0) || *t.Score < 0 || *t.Score > 10 { return SeverityUnknown }
 	switch {
+	case *t.Score == 0: return SeverityNone
 	case *t.Score >= 9: return SeverityCritical
 	case *t.Score >= 7: return SeverityHigh
 	case *t.Score >= 4: return SeverityMedium
@@ -133,6 +141,7 @@ func Evaluate(p Policy,t Target,now time.Time,lastRoutine time.Time) Decision {
 	case SeverityExploited,SeverityCritical: hours=p.CriticalHours
 	case SeverityHigh: hours=p.HighHours
 	case SeverityUnknown: d.Reason="unknown_severity"; return d
+	case SeverityNone: d.Reason="no_cvss_impact";return d
 	}
 	first:=t.FirstSeen
 	if d.Severity==SeverityRoutine && !lastRoutine.IsZero() && lastRoutine.After(first) { first=lastRoutine }
