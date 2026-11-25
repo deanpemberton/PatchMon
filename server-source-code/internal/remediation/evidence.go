@@ -34,6 +34,14 @@ type HostEvidence struct {
 	RecoveryVerified bool `json:"recovery_verified"`
 	ApplicationHealthy bool `json:"application_healthy"`
 	Targets []Target `json:"targets"`
+	ResolvedFindings []ResolvedFinding `json:"resolved_findings,omitempty"`
+}
+
+// ResolvedFinding is a positive vendor-specific reassessment, not an absent row.
+type ResolvedFinding struct {
+	Package string `json:"package"`
+	Key string `json:"key"`
+	Installed string `json:"installed"`
 }
 
 type Evidence struct {
@@ -73,9 +81,22 @@ func Verify(raw []byte,key ed25519.PublicKey,now time.Time)(Evidence,error) {
 	if result.Schema!=1||!Fresh(result.GeneratedAt,now,MaxEvidenceAge)||len(result.Hosts)>10000{return result,errors.New("stale or invalid evidence")}
 	seen:=map[string]bool{}
 	for _,h:=range result.Hosts {
-		if h.HostID==""||len(h.HostID)>128||seen[h.HostID]||len(h.Targets)>10000{return Evidence{},errors.New("invalid or duplicate evidence host")}
+		if h.HostID==""||len(h.HostID)>128||seen[h.HostID]||len(h.Targets)>10000||len(h.ResolvedFindings)>10000{return Evidence{},errors.New("invalid or duplicate evidence host")}
 		seen[h.HostID]=true
-		for _,t:=range h.Targets {if err:=t.Validate();err!=nil{return Evidence{},fmt.Errorf("invalid evidence target: %w",err)}}
+		keys:=map[string]bool{}
+		for _,t:=range h.Targets {
+			if err:=t.Validate();err!=nil{return Evidence{},fmt.Errorf("invalid evidence target: %w",err)}
+			k:=t.CVE
+			if k==""{k="routine:"+t.Installed+":"+t.Candidate}
+			k=t.Package+"|"+k
+			if keys[k]{return Evidence{},errors.New("duplicate finding")}
+			keys[k]=true
+		}
+		for _,f:=range h.ResolvedFindings {
+			k:=f.Package+"|"+f.Key
+			if !packagePattern.MatchString(f.Package)||!versionPattern.MatchString(f.Installed)||!(cvePattern.MatchString(f.Key)||(len(f.Key)<600&&len(f.Key)>8&&f.Key[:8]=="routine:"))||keys[k]{return Evidence{},errors.New("invalid or contradictory resolved finding")}
+			keys[k]=true
+		}
 	}
 	return result,nil
 }
