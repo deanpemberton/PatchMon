@@ -22,6 +22,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/patchstream"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/remediation"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
@@ -694,6 +695,23 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	managedSnapshot, managed, managedErr := remediation.ParseSnapshot(valRun.PolicySnapshot)
+	if managedErr != nil {
+		JSON(w, http.StatusConflict, map[string]string{"error": "Invalid remediation snapshot"})
+		return
+	}
+	if managed {
+		d := hostctx.DBFromContext(r.Context())
+		now := time.Now().UTC()
+		if d == nil || remediation.ValidateDryRun(valRun, managedSnapshot, now) != nil {
+			JSON(w, http.StatusConflict, map[string]string{"error": "A fresh verified remediation dry run is required"})
+			return
+		}
+		if _, err := remediation.Recheck(r.Context(), d, managedSnapshot, now, true); err != nil {
+			JSON(w, http.StatusConflict, map[string]string{"error": "Remediation safety or authorization check failed"})
+			return
+		}
+	}
 	// Parse optional body for schedule_override.
 	var body struct {
 		ScheduleOverride string `json:"schedule_override"`
@@ -802,6 +820,15 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	if managed {
+		// Retain the exact validated plan across the normal browser approval
+		// transaction. Dispatch will independently recheck it again.
+		policyID = &managedSnapshot.PolicyID
+		policyNamePtr = &managedSnapshot.PolicyName
+		policySnap = valRun.PolicySnapshot
+		delayMs = 0
+		runAt = time.Now()
+	}
 	// Create the new patch run ID and job ID up-front so the task can reference it.
 	newRunID := uuid.New().String()
 	jobID := "patch-run-" + newRunID
