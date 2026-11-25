@@ -1,0 +1,120 @@
+name: Publish verified remediation test candidate
+
+on:
+  push:
+    branches: [ci/remediation-artifact-publisher]
+    paths:
+      - .github/workflows/remediation-artifact-publisher.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: remediation-artifact-publisher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: 000a119bc8b2ee80602c09351ee07d900481b6a2
+      BUILD_SHA: 48fb696f8bf90c4b9e04173d40ce40f3cec2f7ec
+      SOURCE_TREE: d1b130ca1bd8982223b01f2920cbf98a3aa724a9
+      BUILD_RUN: "45708828445"
+      ARTIFACT_ID: "15067066778"
+      ARCHIVE_SHA256: 3371a8fb74341bff3900def0573623b41e8d5191a6d248ed8197a66810c9e7ba
+      CHECK_RUNS: "45708828445 45708828298 45708828394 45708828331"
+      TAG: remediation-test-000a119bc8b2
+    steps:
+      - name: Verify exact source, build tree, and all required CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          for sha in "$SOURCE_SHA" "$BUILD_SHA"; do
+            test "$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$sha" --jq .tree.sha)" = "$SOURCE_TREE"
+          done
+          for run in $CHECK_RUNS; do
+            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .head_sha)" = "$SOURCE_SHA"
+          done
+          for iteration in $(seq 1 24); do
+            pending=0
+            for run in $CHECK_RUNS; do
+              state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '[.status,.conclusion] | @tsv')"
+              IFS=$'\t' read -r status conclusion <<< "$state"
+              if test "$status" != completed; then
+                pending=1
+              elif test "$conclusion" != success; then
+                echo "Required run $run did not pass"
+                exit 1
+              fi
+            done
+            if test "$pending" = 0; then break; fi
+            sleep 20
+          done
+          test "$pending" = 0
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" > artifact.json
+          python3 - <<'PY'
+          import json, os
+          a=json.load(open("artifact.json"))
+          assert a["name"]=="remediation-test-binaries"
+          assert a["expired"] is False
+          assert a["digest"]=="sha256:"+os.environ["ARCHIVE_SHA256"]
+          assert str(a["workflow_run"]["id"])==os.environ["BUILD_RUN"]
+          assert a["workflow_run"]["head_sha"]==os.environ["SOURCE_SHA"]
+          assert 0<a["size_in_bytes"]<100_000_000
+          PY
+      - name: Fetch and verify artifact without executing any compiled code
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > candidate.zip
+          printf '%s  candidate.zip\n' "$ARCHIVE_SHA256" | sha256sum -c -
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,re,stat,zipfile
+          names={"patchmon-server","patchmon-agent","BUILD_COMMIT","SHA256SUMS"}
+          root=pathlib.Path("verified")
+          root.mkdir()
+          with zipfile.ZipFile("candidate.zip") as z:
+              entries=z.infolist()
+              assert len(entries)==len(names) and {x.filename for x in entries}==names
+              assert sum(x.file_size for x in entries)<250_000_000
+              for entry in entries:
+                  assert not entry.is_dir() and not stat.S_ISLNK(entry.external_attr>>16)
+                  (root/entry.filename).write_bytes(z.read(entry))
+          assert (root/"BUILD_COMMIT").read_text().strip()==os.environ["BUILD_SHA"]
+          expected={}
+          for line in (root/"SHA256SUMS").read_text().splitlines():
+              m=re.fullmatch(r"([a-f0-9]{64})  (patchmon-server|patchmon-agent|BUILD_COMMIT)",line)
+              assert m and m[2] not in expected
+              expected[m[2]]=m[1]
+          assert set(expected)==names-{"SHA256SUMS"}
+          for name,digest in expected.items():
+              assert hashlib.sha256((root/name).read_bytes()).hexdigest()==digest
+          provenance={"schema":1,"source_commit":os.environ["SOURCE_SHA"],
+                      "build_commit":os.environ["BUILD_SHA"],"source_tree":os.environ["SOURCE_TREE"],
+                      "build_run":int(os.environ["BUILD_RUN"]),"artifact_id":int(os.environ["ARTIFACT_ID"]),
+                      "archive_sha256":os.environ["ARCHIVE_SHA256"],
+                      "verified_workflow_runs":[int(x) for x in os.environ["CHECK_RUNS"].split()],
+                      "asset_sha256":expected,"purpose":"isolated-test-candidate"}
+          (root/"RELEASE_PROVENANCE.json").write_text(json.dumps(provenance,indent=2,sort_keys=True)+"\n")
+          PY
+      - name: Publish immutable-source prerelease for isolated testing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Existing release will not be overwritten"
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "Existing tag will not be reused without review"
+            exit 1
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
+            --prerelease --title "Severity-aware remediation test candidate" \
+            --notes "CI-verified source and binaries for isolated deployment testing. Not production approval. Automated remediation remains opt-in and disabled by default." \
+            verified/patchmon-server verified/patchmon-agent verified/BUILD_COMMIT verified/SHA256SUMS verified/RELEASE_PROVENANCE.json
