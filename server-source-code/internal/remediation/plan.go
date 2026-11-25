@@ -48,7 +48,8 @@ func MakeSnapshot(c Configuration,h HostEvidence,decisions []Decision)(Snapshot,
 	chosen:=[]Decision{}
 	routine:=false
 	for _,d:=range decisions {
-		if !d.Eligible{continue}
+		if !d.Eligible||slices.Contains(h.UnclassifiedSecurityUpdates,d.Target.Package){continue}
+		if !d.Target.Security {blocked:=false;for _,other:=range decisions {if other.Target.Package==d.Target.Package&&other.Target.Security{blocked=true;break}};if blocked{continue}}
 		p:=VerifiedPackage{Name:d.Target.Package,Installed:d.Target.Installed,Candidate:d.Target.Candidate}
 		if prior,ok:=pkgs[p.Name];ok&&prior!=p{return Snapshot{},errors.New("conflicting candidates")}
 		if len(pkgs)>=64 {if _,ok:=pkgs[p.Name];!ok{continue}}
@@ -103,9 +104,12 @@ func FindHost(e Evidence,id string)(HostEvidence,bool) {
 func (s Snapshot) MatchesEvidence(h HostEvidence) bool {
 	if h.HostID!=s.HostID||h.IdentityFingerprint!=s.Identity{return false}
 	for _,pkg:=range s.Packages {
+		if slices.Contains(h.UnclassifiedSecurityUpdates,pkg.Name){return false}
 		found:=false
+		security:=false
+		for _,t:=range h.Targets {if t.Package==pkg.Name&&t.Security {security=true;break}}
 		for _,t:=range h.Targets {
-			if t.Package==pkg.Name&&t.Installed==pkg.Installed&&t.Candidate==pkg.Candidate&&t.FixedCandidateVerified&&(!t.Security||t.VendorApplicable&&Severity(t)!=SeverityUnknown) {found=true;break}
+			if t.Package==pkg.Name&&t.Installed==pkg.Installed&&t.Candidate==pkg.Candidate&&t.FixedCandidateVerified&&((!t.Security&&!security)||(t.Security&&t.VendorApplicable&&Severity(t)!=SeverityUnknown&&Severity(t)!=SeverityNone)) {found=true;break}
 		}
 		if !found{return false}
 	}
