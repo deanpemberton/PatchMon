@@ -23,6 +23,7 @@ const (
 	SeverityMedium    = "medium"
 	SeverityHigh      = "high"
 	SeverityCritical  = "critical"
+	SeverityUnclassifiedSecurity = "unclassified_security"
 	SeverityExploited = "exploited"
 	BackupRequire     = "require"
 	BackupIgnore      = "ignore"
@@ -208,14 +209,33 @@ type Decision struct {
 // Evaluate computes urgency and eligibility separately. Critical/high fixes are
 // eligible immediately; their deadlines are SLA targets, not execution delays.
 func Evaluate(p Policy, t Target, now time.Time, lastRoutine time.Time) Decision {
+	return EvaluateForHost(p, t, nil, now, lastRoutine)
+}
+
+// UpdateSeverity is the shared display and scheduler classification. A signed
+// native security update without matching CVSS gets urgent treatment, not a
+// fabricated CVE, score, or claim that the candidate fixes a vulnerability.
+func UpdateSeverity(t Target, unclassified []string) string {
+	s := Severity(t)
+	if (VerifiedPackage{Name: t.Package, Installed: t.Installed, Candidate: t.Candidate}).Valid() &&
+		((!t.Security && slices.Contains(unclassified, t.Package)) || (t.Security && (s == SeverityUnknown || !t.VendorApplicable && s != SeverityCritical && s != SeverityExploited && s != SeverityHigh))) {
+		return SeverityUnclassifiedSecurity
+	}
+	return s
+}
+
+func EvaluateForHost(p Policy, t Target, unclassified []string, now time.Time, lastRoutine time.Time) Decision {
 	d := Decision{Target: t, Severity: Severity(t)}
+	if p.PriorityOnly {
+		d.Severity = UpdateSeverity(t, unclassified)
+	}
 	if p.Validate() != nil || t.Validate() != nil || t.FirstSeen.After(now) {
 		d.Reason = "invalid_policy_or_target"
 		return d
 	}
 	hours := p.RoutineHours
 	switch d.Severity {
-	case SeverityExploited, SeverityCritical:
+	case SeverityExploited, SeverityCritical, SeverityUnclassifiedSecurity:
 		hours = p.CriticalHours
 	case SeverityHigh:
 		hours = p.HighHours
@@ -281,16 +301,18 @@ func Priority(s string) int {
 		return 0
 	case SeverityCritical:
 		return 1
-	case SeverityHigh:
+	case SeverityUnclassifiedSecurity:
 		return 2
-	case SeverityMedium:
+	case SeverityHigh:
 		return 3
-	case SeverityLow:
+	case SeverityMedium:
 		return 4
-	case SeverityRoutine:
+	case SeverityLow:
 		return 5
-	default:
+	case SeverityRoutine:
 		return 6
+	default:
+		return 7
 	}
 }
 
