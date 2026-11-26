@@ -81,11 +81,11 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 				unless explicitly accepted as a policy risk. Unknown severity is never
 				treated as low.
 			</p>
-			<label htmlFor={prefix + "-mode"} className="block text-sm font-medium">
+			<label htmlFor={`${prefix}-mode`} className="block text-sm font-medium">
 				Execution mode
 			</label>
 			<select
-				id={prefix + "-mode"}
+				id={`${prefix}-mode`}
 				className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2 disabled:opacity-60 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
 				value={form.mode}
 				disabled={!canEdit}

@@ -728,9 +728,13 @@ const Packages = () => {
 					</span>
 				);
 			case "severity": {
-				const severity = PACKAGE_SEVERITY[pkg.severity] || PACKAGE_SEVERITY.unknown;
+				const severity =
+					PACKAGE_SEVERITY[pkg.severity] || PACKAGE_SEVERITY.unknown;
 				return (
-					<span className={severity.className} title={packageAdvisoryTitle(pkg)}>
+					<span
+						className={severity.className}
+						title={packageAdvisoryTitle(pkg)}
+					>
 						{severity.label}
 					</span>
 				);
