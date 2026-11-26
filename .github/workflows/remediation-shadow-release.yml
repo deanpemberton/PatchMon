@@ -21,14 +21,14 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
-      SOURCE_SHA: cab31aebba517d07a21266ae15d3f8ebbdbd5722
+      SOURCE_SHA: 2993dae05173fd9cc3f8ca0b7c5d8d4ac36b95a7
       BUILD_VERSION: 2.1.9-rc.remediation.10
-      RELEASE_TAG: remediation-shadow-cab31aebba51
-      CHECK_RUNS: "45902751620 45902751632 45902751668 45902751669"
+      RELEASE_TAG: remediation-shadow-2993dae05173
+      CHECK_RUNS: "45903634609 45903634722 45903634624 45903634638"
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: cab31aebba517d07a21266ae15d3f8ebbdbd5722
+          ref: 2993dae05173fd9cc3f8ca0b7c5d8d4ac36b95a7
           persist-credentials: false
       - name: Verify exact source and CI gates
         run: |
@@ -40,20 +40,6 @@ jobs:
           for run in $CHECK_RUNS; do
             test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .head_sha)" = "$SOURCE_SHA"
           done
-          for attempt in $(seq 1 40); do
-            pending=0
-            for run in $CHECK_RUNS; do
-              status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .status)
-              if test "$status" != completed; then
-                pending=1
-              else
-                test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .conclusion)" = success
-              fi
-            done
-            if test "$pending" = 0; then break; fi
-            sleep 20
-          done
-          test "$pending" = 0
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
         with:
           node-version-file: package.json
@@ -91,6 +77,23 @@ jobs:
           manifest=dict(schema=1,source_commit=os.environ["SOURCE_SHA"],source_tree=os.environ["SOURCE_TREE"],build_commit=os.environ["SOURCE_SHA"],build_version=os.environ["BUILD_VERSION"],build_run=int(os.environ["GITHUB_RUN_ID"]),verified_workflow_runs=[int(x) for x in os.environ["CHECK_RUNS"].split()],asset_sha256=assets,purpose="shadow-release-candidate")
           (root/"RELEASE_PROVENANCE.json").write_text(json.dumps(manifest,sort_keys=True,indent=2)+"\n")
           PY
+      - name: Await all exact-source CI gates before publishing
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 40); do
+            pending=0
+            for run in $CHECK_RUNS; do
+              status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .status)
+              if test "$status" != completed; then
+                pending=1
+              else
+                test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .conclusion)" = success
+              fi
+            done
+            if test "$pending" = 0; then break; fi
+            sleep 20
+          done
+          test "$pending" = 0
       - name: Publish versioned prerelease
         run: |
           set -euo pipefail
