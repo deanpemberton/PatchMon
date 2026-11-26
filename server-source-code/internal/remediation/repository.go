@@ -272,12 +272,18 @@ func Observe(ctx context.Context, d *database.DB, c Configuration, h HostEvidenc
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	out := make([]Decision, 0, len(h.Targets))
-	for _, t := range h.Targets {
+	targets := h.Targets
+	if c.Policy.PriorityOnly {
+		// A pending installation has one durable discovery/deadline anchor,
+		// regardless of how many CVEs are later assigned or reclassified.
+		targets = PriorityTargets(h)
+	}
+	for _, t := range targets {
 		if t.FirstSeen.After(now) {
 			return nil, errors.New("future finding")
 		}
 		key := t.CVE
-		if key == "" {
+		if key == "" || (c.Policy.PriorityOnly && t.Candidate != "") {
 			key = "routine:" + t.Installed + ":" + t.Candidate
 		}
 		var first time.Time
@@ -289,7 +295,7 @@ func Observe(ctx context.Context, d *database.DB, c Configuration, h HostEvidenc
 		if !first.IsZero() && first.Before(t.FirstSeen) {
 			t.FirstSeen = first
 		}
-		x := Evaluate(c.Policy, t, now, lastRoutine)
+		x := EvaluateForHost(c.Policy, t, h.UnclassifiedSecurityUpdates, now, lastRoutine)
 		if priorDeadline != nil && (x.Deadline == nil || priorDeadline.Before(*x.Deadline)) {
 			x.Deadline = priorDeadline
 			x.Overdue = !now.Before(*priorDeadline)
