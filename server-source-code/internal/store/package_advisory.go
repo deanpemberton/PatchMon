@@ -12,16 +12,16 @@ import (
 // PackageAdvisorySummary reports the highest known CVSS and priority for
 // matching current installations. Missing data is never a score of zero.
 type PackageAdvisorySummary struct {
-	CVSSScore         *float64 `json:"cvssScore"`
-	Severity          string   `json:"severity"`
-	AdvisoryHostCount int32    `json:"advisoryHostCount"`
-	AdvisoryCVECount  int32    `json:"advisoryCveCount"`
-	CVSSVersion       *string  `json:"cvssVersion"`
-	CVSSSource        *string  `json:"cvssSource"`
-	UpdatePriorityPending bool `json:"updatePriorityPending"`
-	PriorityDeadline *time.Time `json:"priorityDeadline"`
-	PriorityFirstSeen *time.Time `json:"priorityFirstSeen"`
-	PriorityStatus string `json:"priorityStatus"`
+	CVSSScore             *float64   `json:"cvssScore"`
+	Severity              string     `json:"severity"`
+	AdvisoryHostCount     int32      `json:"advisoryHostCount"`
+	AdvisoryCVECount      int32      `json:"advisoryCveCount"`
+	CVSSVersion           *string    `json:"cvssVersion"`
+	CVSSSource            *string    `json:"cvssSource"`
+	UpdatePriorityPending bool       `json:"updatePriorityPending"`
+	PriorityDeadline      *time.Time `json:"priorityDeadline"`
+	PriorityFirstSeen     *time.Time `json:"priorityFirstSeen"`
+	PriorityStatus        string     `json:"priorityStatus"`
 }
 
 type packageAdvisoryRow struct {
@@ -32,7 +32,7 @@ type packageAdvisoryRow struct {
 	OSVersion   string   `json:"os_version"`
 	Package     string   `json:"package"`
 	Installed   string   `json:"installed"`
-	Candidate string `json:"candidate"`
+	Candidate   string   `json:"candidate"`
 	CVE         string   `json:"cve"`
 	CVSS        *float64 `json:"cvss"`
 	Version     string   `json:"score_version"`
@@ -42,14 +42,14 @@ type packageAdvisoryRow struct {
 
 func advisoryRank(severity string) *int32 {
 	ranks := map[string]int32{
-		remediation.SeverityExploited: 7,
-		remediation.SeverityCritical:  6,
+		remediation.SeverityExploited:            7,
+		remediation.SeverityCritical:             6,
 		remediation.SeverityUnclassifiedSecurity: 5,
-		remediation.SeverityHigh:      4,
-		remediation.SeverityMedium:    3,
-		remediation.SeverityLow:       2,
-		remediation.SeverityNone:      1,
-		remediation.SeverityRoutine: 0,
+		remediation.SeverityHigh:                 4,
+		remediation.SeverityMedium:               3,
+		remediation.SeverityLow:                  2,
+		remediation.SeverityNone:                 1,
+		remediation.SeverityRoutine:              0,
 	}
 	if rank, ok := ranks[severity]; ok {
 		return &rank
