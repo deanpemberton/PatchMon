@@ -56,6 +56,7 @@ type PackageWithStats struct {
 	PackageHosts      []PackageHostRef `json:"packageHosts"`
 	Stats             PackageStats     `json:"stats"`
 	SourceRepos       []PackageRepoRef `json:"sourceRepos"`
+	PackageAdvisorySummary
 }
 
 // orEmptyRepos returns an empty slice instead of nil so JSON serialises as [] not null.
@@ -136,6 +137,10 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 	if p.Repository != "" {
 		filters.RepositoryID = &p.Repository
 	}
+
+	// Read the same signed, fresh advisory snapshot used by remediation.
+	// Missing evidence must not prevent package browsing or imply no risk.
+	filters.AdvisoryJSON = currentPackageAdvisories(time.Now().UTC())
 
 	// CountPackages + ListPackages run in one transaction. Both queries
 	// are now built dynamically (see packages_list_sql.go) so the WHERE
@@ -244,7 +249,8 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 				UpdatesNeeded:   updatesNeeded,
 				SecurityUpdates: securityUpdates,
 			},
-			SourceRepos: orEmptyRepos(reposByPkg[p.ID]),
+			SourceRepos:            orEmptyRepos(reposByPkg[p.ID]),
+			PackageAdvisorySummary: p.PackageAdvisorySummary,
 		}
 	}
 	return out, int(total), totalInstalls, nil
@@ -252,7 +258,7 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 
 func packageListSortKey(sort string) string {
 	switch sort {
-	case "name", "latestVersion", "packageHosts", "status":
+	case "name", "latestVersion", "packageHosts", "status", "cvssScore", "severity":
 		return sort
 	default:
 		return "name"

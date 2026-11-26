@@ -23,6 +23,8 @@ type listPackagesRow struct {
 	TotalInstalls   int32
 	UpdatesNeeded   int32
 	SecurityUpdates int32
+	PackageAdvisorySummary
+	SeverityRank *int32
 }
 
 // packagesListSortColumn maps the public sort_key value (as documented in
@@ -39,6 +41,8 @@ var packagesListSortColumn = map[string]string{
 	"latestVersion": "latest_version",
 	"packageHosts":  "total_installs",
 	"status":        "status_rank",
+	"cvssScore":     "cvss_score",
+	"severity":      "severity_rank",
 }
 
 // nullsTrailingOnSortKey marks which whitelisted sort keys can contain
@@ -47,6 +51,8 @@ var packagesListSortColumn = map[string]string{
 // COALESCE-zeroed in the SELECT, and `name` is non-null UNIQUE.
 var nullsTrailingOnSortKey = map[string]bool{
 	"latestVersion": true,
+	"cvssScore":     true,
+	"severity":      true,
 }
 
 // resolvePackagesListSort returns the safe ORDER BY clause for the
@@ -90,6 +96,7 @@ type packagesListFilters struct {
 	NeedsUpdate      *string
 	IsSecurityUpdate *string
 	RepositoryID     *string
+	AdvisoryJSON     string
 }
 
 // packagesListWhereSQL builds the WHERE predicate plus the matching args
@@ -242,6 +249,8 @@ func listPackagesSQL(filters packagesListFilters, sortKey, sortDir string, limit
 	// No CTE, so LIMIT pushes down. Fleet view: per-row figures from
 	// mv_package_stats. Host filter: from that host's own host_packages row.
 	var b strings.Builder
+	advisoryCTE, advisoryColumns, advisoryJoin, args := packageAdvisorySQL(filters, args)
+	b.WriteString(advisoryCTE)
 	if hostScoped(filters) {
 		var hostJoin string
 		hostJoin, args = hostPackagesJoinSQL(filters, args)
@@ -257,10 +266,13 @@ func listPackagesSQL(filters packagesListFilters, sortKey, sortDir string, limit
            WHEN hph.needs_update AND hph.is_security_update THEN 0
            WHEN hph.needs_update THEN 1
            ELSE 2
-       END AS status_rank
+       END AS status_rank, `)
+		b.WriteString(advisoryColumns)
+		b.WriteString(`
 FROM packages p
 `)
 		b.WriteString(hostJoin)
+		b.WriteString(advisoryJoin)
 		b.WriteString(`
 WHERE `)
 	} else {
@@ -272,9 +284,13 @@ WHERE `)
            WHEN COALESCE(s.security_updates, 0) > 0 THEN 0
            WHEN COALESCE(s.updates_needed, 0) > 0   THEN 1
            ELSE 2
-       END AS status_rank
+       END AS status_rank, `)
+		b.WriteString(advisoryColumns)
+		b.WriteString(`
 FROM packages p
-LEFT JOIN mv_package_stats s ON s.package_id = p.id
+LEFT JOIN mv_package_stats s ON s.package_id = p.id`)
+		b.WriteString(advisoryJoin)
+		b.WriteString(`
 WHERE `)
 	}
 	b.WriteString(where)
@@ -336,10 +352,17 @@ func runListPackages(ctx context.Context, tx pgx.Tx, filters packagesListFilters
 			&r.UpdatesNeeded,
 			&r.SecurityUpdates,
 			&statusRank,
+			&r.CVSSScore,
+			&r.SeverityRank,
+			&r.AdvisoryHostCount,
+			&r.AdvisoryCVECount,
+			&r.CVSSVersion,
+			&r.CVSSSource,
 		); err != nil {
 			return nil, err
 		}
 		r.CreatedAt = createdAt
+		r.Severity = advisorySeverity(r.SeverityRank)
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {

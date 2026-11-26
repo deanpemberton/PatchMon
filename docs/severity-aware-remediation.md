@@ -163,3 +163,16 @@ Before production promotion:
 
 A server/agent build alone does not prove a live migration, vendor mapping,
 backup restoration, or patch execution is safe.
+
+## Package list advisory visibility
+
+The Packages table exposes sortable CVSS and Severity columns. CVSS is the
+highest numeric score among current, applicable signed advisory matches for
+the selected host scope. Known exploited findings take precedence in severity
+without manufacturing a numeric CVSS value. Exact host enrollment fingerprint,
+package snapshot hash, OS/release and installed binary version must still
+match the current inventory. Missing, expired, unmatched or unscored evidence
+is displayed as Unknown (not zero or safe); partial evidence is not proof of
+complete vulnerability coverage. Sorting is performed before pagination and
+unknowns remain last. This read-only presentation is independent of execution
+mode, fixed-candidate verification and patch authorization.

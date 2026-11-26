@@ -63,6 +63,8 @@ const PACKAGES_SORTABLE_COLUMNS = new Set([
 	"name",
 	"packageHosts",
 	"status",
+	"cvssScore",
+	"severity",
 	"latestVersion",
 ]);
 
@@ -76,9 +78,32 @@ function formatRepoName(name) {
 const PACKAGE_COLUMN_WIDTH = {
 	packageHosts: "w-28",
 	status: "w-56",
+	cvssScore: "w-24",
+	severity: "w-32",
 	latestVersion: "w-40",
 	sourceRepos: "w-48",
 };
+
+const PACKAGE_SEVERITY = {
+	exploited: { label: "Known Exploited", className: "badge-danger" },
+	critical: { label: "Critical", className: "badge-danger" },
+	high: { label: "High", className: "badge-warning" },
+	medium: { label: "Medium", className: "badge-warning" },
+	low: { label: "Low", className: "badge-secondary" },
+	none: { label: "None (CVSS 0)", className: "badge-secondary" },
+	unknown: { label: "Unknown", className: "badge-secondary" },
+};
+
+function packageAdvisoryTitle(pkg) {
+	const count = pkg.advisoryHostCount || 0;
+	if (!count) {
+		return "No fresh matched advisory evidence. This does not establish that the package is safe.";
+	}
+	const source = Number.isFinite(pkg.cvssScore)
+		? `Highest known CVSS v${pkg.cvssVersion || "?"} (${pkg.cvssSource || "source unknown"}).`
+		: "Applicable advisory evidence without a numeric CVSS score.";
+	return `${source} ${pkg.advisoryCveCount} matched CVE(s) on ${count} host(s) in this view. Other or unscored findings may exist; severity does not authorize patching.`;
+}
 
 const WindowsPackageTags = ({ info }) => {
 	const source = windowsSourceLabel(info);
@@ -167,19 +192,35 @@ const Packages = () => {
 			{ id: "name", label: "Package", visible: true, order: 0 },
 			{ id: "packageHosts", label: "Installed On", visible: true, order: 1 },
 			{ id: "status", label: "Status", visible: true, order: 2 },
-			{ id: "latestVersion", label: "Latest Version", visible: true, order: 3 },
-			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 4 },
+			{ id: "cvssScore", label: "CVSS", visible: true, order: 3 },
+			{ id: "severity", label: "Severity", visible: true, order: 4 },
+			{ id: "latestVersion", label: "Latest Version", visible: true, order: 5 },
+			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 6 },
 		];
 
 		const saved = localStorage.getItem("packages-column-config");
 		if (saved) {
 			try {
 				const savedConfig = JSON.parse(saved);
-				// Merge with defaults to handle new columns
-				return defaultConfig.map((defaultCol) => {
-					const savedCol = savedConfig.find((col) => col.id === defaultCol.id);
-					return savedCol ? { ...defaultCol, ...savedCol } : defaultCol;
-				});
+				// Preserve saved visibility/order, inserting newly introduced columns
+				// next to Status without colliding with existing saved positions.
+				const existing = defaultConfig
+					.filter((col) => savedConfig.some((saved) => saved.id === col.id))
+					.map((col) => ({
+						...col,
+						...savedConfig.find((saved) => saved.id === col.id),
+					}))
+					.sort((a, b) => a.order - b.order);
+				const missing = defaultConfig.filter(
+					(col) => !existing.some((saved) => saved.id === col.id),
+				);
+				const statusIndex = existing.findIndex((col) => col.id === "status");
+				existing.splice(
+					statusIndex < 0 ? existing.length : statusIndex + 1,
+					0,
+					...missing,
+				);
+				return existing.map((col, order) => ({ ...col, order }));
 			} catch (_e) {
 				localStorage.removeItem("packages-column-config");
 			}
@@ -520,7 +561,9 @@ const Packages = () => {
 			setSortDirection(sortDirection === "asc" ? "desc" : "asc");
 		} else {
 			setSortField(field);
-			setSortDirection("asc");
+			setSortDirection(
+				field === "cvssScore" || field === "severity" ? "desc" : "asc",
+			);
 		}
 	};
 
@@ -559,8 +602,10 @@ const Packages = () => {
 			{ id: "name", label: "Package", visible: true, order: 0 },
 			{ id: "packageHosts", label: "Installed On", visible: true, order: 1 },
 			{ id: "status", label: "Status", visible: true, order: 2 },
-			{ id: "latestVersion", label: "Latest Version", visible: true, order: 3 },
-			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 4 },
+			{ id: "cvssScore", label: "CVSS", visible: true, order: 3 },
+			{ id: "severity", label: "Severity", visible: true, order: 4 },
+			{ id: "latestVersion", label: "Latest Version", visible: true, order: 5 },
+			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 6 },
 		];
 		updateColumnConfig(defaultConfig);
 	};
@@ -669,6 +714,25 @@ const Packages = () => {
 					</span>
 				) : (
 					<span className="badge-warning">Update Available</span>
+				);
+			}
+			case "cvssScore":
+				return (
+					<span
+						className="text-sm tabular-nums"
+						title={packageAdvisoryTitle(pkg)}
+					>
+						{Number.isFinite(pkg.cvssScore)
+							? pkg.cvssScore.toFixed(1)
+							: "Unknown"}
+					</span>
+				);
+			case "severity": {
+				const severity = PACKAGE_SEVERITY[pkg.severity] || PACKAGE_SEVERITY.unknown;
+				return (
+					<span className={severity.className} title={packageAdvisoryTitle(pkg)}>
+						{severity.label}
+					</span>
 				);
 			}
 			case "latestVersion":
