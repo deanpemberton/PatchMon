@@ -30,7 +30,7 @@ func TestPriorityOnlyIsScopedAndDoesNotClaimFix(t *testing.T) {
 		hours    int
 		score    *float64
 		kev      bool
-	}{{SeverityCritical, 4, &score, false}, {SeverityExploited, 4, nil, true}, {SeverityUnknown, 24, nil, false}} {
+	}{{SeverityCritical, 4, &score, false}, {SeverityExploited, 4, nil, true}, {SeverityUnclassifiedSecurity, 4, nil, false}} {
 		target.Score = tc.score
 		target.KnownExploited = tc.kev
 		d := Evaluate(c.Policy, target, now, time.Time{})
