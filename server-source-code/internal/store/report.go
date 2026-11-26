@@ -111,7 +111,8 @@ type ReportRepository struct {
 
 // ReportPayload is the agent's report payload (subset of fields we process).
 type ReportPayload struct {
-	APTProvenance          json.RawMessage `json:"aptProvenance,omitempty"`
+	APTProvenance json.RawMessage `json:"aptProvenance,omitempty"`
+
 	Packages               []ReportPackage    `json:"packages"`
 	Repositories           []ReportRepository `json:"repositories"`
 	OSType                 string             `json:"osType"`

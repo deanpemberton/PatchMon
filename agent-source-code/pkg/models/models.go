@@ -98,7 +98,8 @@ type NetworkAddress struct {
 
 // ReportPayload represents the data sent to the server
 type ReportPayload struct {
-	APTProvenance          json.RawMessage `json:"aptProvenance,omitempty"`
+	APTProvenance json.RawMessage `json:"aptProvenance,omitempty"`
+
 	Packages               []Package    `json:"packages"`
 	Repositories           []Repository `json:"repositories"`
 	OSType                 string       `json:"osType"`
