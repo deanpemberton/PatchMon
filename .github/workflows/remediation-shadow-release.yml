@@ -21,21 +21,22 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
-      SOURCE_SHA: 5bf806ae03139bd1ddd0904c2678be0245eca3da
-      SOURCE_TREE: 264250693e7d83cf79e75e6b3939ae13ec2c7284
-      BUILD_VERSION: 2.1.9-rc.remediation.8
-      RELEASE_TAG: remediation-shadow-5bf806ae0313
-      CHECK_RUNS: "45763832203 45763832346 45763832222 45763832345"
+      SOURCE_SHA: cc79ad0a8f5e748f77735a885ca64368b67def6b
+            BUILD_VERSION: 2.1.9-rc.remediation.9
+      RELEASE_TAG: remediation-shadow-cc79ad0a8f5e
+      CHECK_RUNS: "45897317839 45897317798 45897317769 45897317791"
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: 5bf806ae03139bd1ddd0904c2678be0245eca3da
+          ref: cc79ad0a8f5e748f77735a885ca64368b67def6b
           persist-credentials: false
       - name: Verify exact source and CI gates
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          test "$(git rev-parse HEAD^{tree})" = "$SOURCE_TREE"
+          SOURCE_TREE="$(git rev-parse HEAD^{tree})"
+          test "$SOURCE_TREE" = "$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$SOURCE_SHA" --jq .tree.sha)"
+          printf 'SOURCE_TREE=%s\n' "$SOURCE_TREE" >> "$GITHUB_ENV"
           for run in $CHECK_RUNS; do
             test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .head_sha)" = "$SOURCE_SHA"
           done
