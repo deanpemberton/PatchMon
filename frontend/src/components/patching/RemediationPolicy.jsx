@@ -4,6 +4,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useConfirm } from "../../contexts/ConfirmContext";
 import { useToast } from "../../contexts/ToastContext";
 import api from "../../utils/api";
+import CveLink from "../ui/CveLink";
 
 const modes = [
 	["disabled", "Disabled"],
@@ -308,7 +309,9 @@ export default function RemediationPolicy({ policy, hosts }) {
 									>
 										<td className="p-2">{hostName(row.host)}</td>
 										<td className="p-2">{row.target.package}</td>
-										<td className="p-2">{row.target.cve || "—"}</td>
+										<td className="p-2">
+											<CveLink cve={row.target.cve} />
+										</td>
 										<td className="p-2" title={row.target.score_source || ""}>
 											{row.target.score ?? "Unknown"}
 										</td>

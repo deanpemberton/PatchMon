@@ -176,3 +176,7 @@ is displayed as Unknown (not zero or safe); partial evidence is not proof of
 complete vulnerability coverage. Sorting is performed before pagination and
 unknowns remain last. This read-only presentation is independent of execution
 mode, fixed-candidate verification and patch authorization.
+
+Render individual CVE identifiers in the UI using the shared `CveLink`
+component. Links open the canonical NIST NVD description in a new tab;
+never use an advisory-supplied URL or turn a missing identifier into a link.
