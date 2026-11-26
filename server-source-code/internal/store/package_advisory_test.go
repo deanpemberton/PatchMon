@@ -46,7 +46,7 @@ func TestPackageAdvisorySQLScopeAndSort(t *testing.T) {
 	host := "fixture-host"
 	filters := packagesListFilters{HostID: &host, AdvisoryJSON: "[]"}
 	query, args := listPackagesSQL(filters, "cvssScore", "desc", 25, 50)
-	for _, required := range []string{"jsonb_to_recordset($3::jsonb)", "h.id = $4", "hph.host_id = $5", "hp.current_version=v.installed", "h.packages_hash=v.package_hash", "h.identity_fingerprint=v.fingerprint", "ORDER BY cvss_score DESC NULLS LAST, name ASC, id ASC LIMIT $1 OFFSET $2"} {
+	for _, required := range []string{"jsonb_to_recordset($3::jsonb)", "h.id = $4", "hph.host_id = $5", "hp.current_version=v.installed", "h.packages_hash=v.package_hash", "h.identity_fingerprint=v.fingerprint", "(now() AT TIME ZONE 'UTC') - interval '90 minutes'", "(now() AT TIME ZONE 'UTC') - interval '24 hours'", "ORDER BY cvss_score DESC NULLS LAST, name ASC, id ASC LIMIT $1 OFFSET $2"} {
 		if !strings.Contains(query, required) {
 			t.Fatalf("missing %q: %s", required, query)
 		}
