@@ -1,0 +1,54 @@
+name: Build bounded native agent update maintenance client
+on:
+  push:
+    branches: [ci/remediation-agent-update-push]
+    paths: [".github/workflows/agent-update-push.yml", "maintenance/agent-update-push/**"]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: 98a6dcf92c4aeb6a4ea10117787b64933f72c0c9
+      SOURCE_TREE: ec30c75d709d1367195122adca383b53fa43e095
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+          path: helper
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: 98a6dcf92c4aeb6a4ea10117787b64933f72c0c9
+          persist-credentials: false
+          path: upstream
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: upstream/server-source-code/go.mod
+          cache-dependency-path: upstream/server-source-code/go.sum
+      - name: Verify and test exact native queue client
+        run: |
+          set -euo pipefail
+          test "$(git -C helper rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C upstream rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git -C upstream rev-parse HEAD^{tree})" = "$SOURCE_TREE"
+          for n in 45718822962 45718822907 45718823040 45718823036; do
+            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$n" --jq .head_sha)" = "$SOURCE_SHA"
+            test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$n" --jq .conclusion)" = success
+          done
+          mkdir -p upstream/server-source-code/cmd/agent-update-push release
+          cp helper/maintenance/agent-update-push/*.go upstream/server-source-code/cmd/agent-update-push/
+          (
+            cd upstream/server-source-code
+            go test -mod=readonly ./cmd/agent-update-push
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath -buildvcs=false -o ../../release/agent-update-push ./cmd/agent-update-push
+          )
+          (cd release; sha256sum agent-update-push > SHA256SUMS)
+          printf '%s\n%s\n' "$SOURCE_SHA" "$GITHUB_SHA" > release/BUILD_COMMITS
+      - name: Publish pinned maintenance client
+        run: |
+          set -euo pipefail
+          tag="agent-update-push-${GITHUB_SHA:0:12}"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Bounded local agent-update maintenance client" --notes "For authorized local administration only. Native agent update gates remain enforced. No OS patching or reboot support." release/agent-update-push release/SHA256SUMS release/BUILD_COMMITS
