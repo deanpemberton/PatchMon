@@ -92,7 +92,10 @@ const PACKAGE_SEVERITY = {
 	low: { label: "Low", className: "badge-secondary" },
 	none: { label: "None (CVSS 0)", className: "badge-secondary" },
 	unknown: { label: "Unknown", className: "badge-secondary" },
-	unclassified_security: { label: "Security — urgent", className: "badge-warning" },
+	unclassified_security: {
+		label: "Security — urgent",
+		className: "badge-warning",
+	},
 	routine: { label: "Routine", className: "badge-secondary" },
 };
 
@@ -107,19 +110,39 @@ function priorityStatus(pkg) {
 		routine_not_due: "Waiting for routine cycle",
 		concurrency_limit: "Waiting for execution slot",
 	};
-	return raw.split(", ").filter(Boolean).map((s) => labels[s] || s.replaceAll("_", " ")).join("; ");
+	return raw
+		.split(", ")
+		.filter(Boolean)
+		.map((s) => labels[s] || s.replaceAll("_", " "))
+		.join("; ");
 }
 
 function packageAdvisoryTitle(pkg) {
 	const count = pkg.advisoryHostCount || 0;
-	const scope = pkg.updatePriorityPending ? "Available updates only." : "Installed-version observations; no update available.";
+	const scope = pkg.updatePriorityPending
+		? "Available updates only."
+		: "Installed-version observations; no update available.";
 	const source = Number.isFinite(pkg.cvssScore)
 		? `CVSS v${pkg.cvssVersion || "?"} (${pkg.cvssSource || "source unknown"}).`
 		: "No numeric CVSS verified.";
-	const priority = pkg.severity === "unclassified_security"
-		? "Security update without a verified applicable score; urgent four-hour policy."
-		: "";
-	return [scope, source, priority, `${count} matched host(s); ${pkg.advisoryCveCount || 0} selected CVE(s).`, priorityStatus(pkg), pkg.priorityFirstSeen && `Discovered: ${new Date(pkg.priorityFirstSeen).toLocaleString()}`, pkg.priorityDeadline && `Deadline: ${new Date(pkg.priorityDeadline).toLocaleString()}`, "Priority grades the available update, not proof of a verified vulnerability fix."].filter(Boolean).join(" ");
+	const priority =
+		pkg.severity === "unclassified_security"
+			? "Security update without a verified applicable score; urgent four-hour policy."
+			: "";
+	return [
+		scope,
+		source,
+		priority,
+		`${count} matched host(s); ${pkg.advisoryCveCount || 0} selected CVE(s).`,
+		priorityStatus(pkg),
+		pkg.priorityFirstSeen &&
+			`Discovered: ${new Date(pkg.priorityFirstSeen).toLocaleString()}`,
+		pkg.priorityDeadline &&
+			`Deadline: ${new Date(pkg.priorityDeadline).toLocaleString()}`,
+		"Priority grades the available update, not proof of a verified vulnerability fix.",
+	]
+		.filter(Boolean)
+		.join(" ");
 }
 
 const WindowsPackageTags = ({ info }) => {
@@ -751,13 +774,27 @@ const Packages = () => {
 				return (
 					<div className="space-y-1" title={packageAdvisoryTitle(pkg)}>
 						<span className={severity.className}>
-							{severity.label}{!pending && ["critical", "exploited", "high", "medium", "low"].includes(pkg.severity) ? " — no update" : ""}
+							{severity.label}
+							{!pending &&
+							["critical", "exploited", "high", "medium", "low"].includes(
+								pkg.severity,
+							)
+								? " — no update"
+								: ""}
 						</span>
 						{pending && (
 							<div className="text-xs text-secondary-500 dark:text-secondary-400">
 								{priorityStatus(pkg)}
-								{pkg.priorityDeadline && <div>Due {new Date(pkg.priorityDeadline).toLocaleString()}</div>}
-								{pkg.priorityFirstSeen && <div>Seen {new Date(pkg.priorityFirstSeen).toLocaleString()}</div>}
+								{pkg.priorityDeadline && (
+									<div>
+										Due {new Date(pkg.priorityDeadline).toLocaleString()}
+									</div>
+								)}
+								{pkg.priorityFirstSeen && (
+									<div>
+										Seen {new Date(pkg.priorityFirstSeen).toLocaleString()}
+									</div>
+								)}
 							</div>
 						)}
 					</div>
