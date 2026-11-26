@@ -142,7 +142,7 @@ func TestMigrationAndRemediationRepository(t *testing.T) {
 	// The configured preferred host is not required to have a particular
 	// package cohort. Elect the first admitted host from native history.
 	exec("UPDATE host_packages SET available_version='1.0-2' WHERE id='fixture-host-package'")
-	exec("INSERT INTO hosts(id,friendly_name,os_type,os_version,updated_at,api_id,api_key,package_manager,last_update,last_full_report_at,identity_fingerprint,packages_hash,status) VALUES('fixture-second','Second host','Debian','13',NOW(),'fixture-second-enrollment','fixture-not-a-secret','apt',$1,$1,'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','active')", now)
+	exec("INSERT INTO hosts(id,friendly_name,os_type,os_version,updated_at,api_id,api_key,package_manager,last_update,last_full_report_at,identity_fingerprint,packages_hash,status) VALUES('fixture-second','Second host','Debian','13',NOW(),'fixture-second-enrollment','fixture-second-not-a-secret','apt',$1,$1,'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','active')", now)
 	exec("INSERT INTO host_group_memberships(id,host_id,host_group_id) VALUES('fixture-second-member','fixture-second','fixture-group')")
 	h2 := h
 	h2.HostID = "fixture-second"
