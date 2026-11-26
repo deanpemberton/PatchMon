@@ -1,0 +1,39 @@
+name: Build native agent-only rollout helper
+on:
+  push:
+    branches: [ci/native-agent-rollout-helper]
+    paths:
+      - .github/workflows/native-agent-rollout-helper.yml
+      - server-source-code/cmd/native-agent-rollout/**
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: server-source-code/go.mod
+          cache-dependency-path: server-source-code/go.sum
+      - name: Test and build exact native agent-only task sender
+        run: |
+          set -euo pipefail
+          cd server-source-code
+          gofmt -w cmd/native-agent-rollout
+          go test -mod=readonly ./cmd/native-agent-rollout
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath -buildvcs=false -o ../native-agent-rollout ./cmd/native-agent-rollout
+          cd ..
+          sha256sum native-agent-rollout > SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > BUILD_COMMIT
+      - name: Publish immutable-source helper
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="native-agent-rollout-${GITHUB_SHA:0:12}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then exit 1; fi
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Native agent-only rollout helper" --notes "Local administrator helper using pinned Asynq SDK, exact update_agent task only. No host data or credentials." native-agent-rollout SHA256SUMS BUILD_COMMIT
