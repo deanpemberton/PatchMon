@@ -172,7 +172,7 @@ func (h HostEvidence) Safe(now time.Time, p Policy) bool {
 		recoveryOK = p.Validate() == nil && (h.RecoveryVerified || slices.Contains(p.BackupOnlyHostIDs, h.HostID))
 	}
 	return Fresh(h.ObservedAt, now, MaxEvidenceAge) && h.IdentityFingerprint != "" && h.PackagesHash != "" &&
-		h.BackupComplete && recoveryOK && h.ApplicationHealthy &&
+		h.BackupComplete && recoveryOK && (p.PriorityOnly || h.ApplicationHealthy) &&
 		Fresh(h.BackupAt, now, time.Duration(p.BackupMaxAgeHours)*time.Hour)
 }
 

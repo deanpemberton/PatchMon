@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 )
 
 type Configuration struct {
+	PriorityOnly bool `json:"priority_only,omitempty"`
+
 	PolicyID  string          `json:"policy_id"`
 	Name      string          `json:"name"`
 	DelayType string          `json:"delay_type"`
@@ -38,7 +41,18 @@ func ReadConfiguration(ctx context.Context, d *database.DB, id string) (Configur
 			return c, err
 		}
 	}
+	applyPriorityOnly(&c)
 	return c, c.Policy.Validate()
+}
+
+// Priority-only semantics are a local administrative deployment option
+// for one saved, automatic policy with an explicitly accepted backup scope.
+// Other policies retain the strict validation/canary behavior.
+func applyPriorityOnly(c *Configuration) {
+	p := &c.Policy
+	p.PriorityOnly = c.PolicyID != "" && os.Getenv("PATCHMON_PRIORITY_ONLY_POLICY_ID") == c.PolicyID &&
+		p.Mode == ModeAutomatic && p.RecoveryWaiverUntil == nil && len(p.BackupOnlyHostIDs) > 0
+	c.PriorityOnly = p.PriorityOnly
 }
 
 func WriteConfiguration(ctx context.Context, d *database.DB, id, actor string, expected int64, p Policy) error {
@@ -178,6 +192,7 @@ func ListConfigurations(ctx context.Context, d *database.DB) ([]Configuration, e
 		if err = json.Unmarshal(raw, &c.Policy); err != nil {
 			return nil, err
 		}
+		applyPriorityOnly(&c)
 		if err = c.Policy.Validate(); err != nil {
 			return nil, err
 		}
@@ -343,8 +358,11 @@ func CheckDispatchIdentity(ctx context.Context, d *database.DB, hostID, apiID st
 }
 
 func CheckHost(ctx context.Context, d *database.DB, h HostEvidence, pkgs []VerifiedPackage, now time.Time, p Policy) error {
+	if p.PriorityOnly && !slices.Contains(p.BackupOnlyHostIDs, h.HostID) {
+		return errors.New("host outside authorized backup scope")
+	}
 	if !h.Safe(now, p) {
-		return errors.New("backup, recovery, health or evidence freshness gate")
+		return errors.New("required backup, recovery or evidence gate (health when configured)")
 	}
 	tx, err := d.Begin(ctx)
 	if err != nil {
@@ -358,7 +376,7 @@ func CheckHost(ctx context.Context, d *database.DB, h HostEvidence, pkgs []Verif
 	if err != nil {
 		return err
 	}
-	if status != "active" || manager != "apt" || osType != h.OS || osVersion != h.OSVersion || fingerprint != h.IdentityFingerprint || hash != h.PackagesHash || conflict || reboot || waiting || lastUpdate == nil || lastReport == nil || !Fresh(*lastUpdate, now, 90*time.Minute) || !Fresh(*lastReport, now, 24*time.Hour) {
+	if status != "active" || manager != "apt" || osType != h.OS || osVersion != h.OSVersion || fingerprint != h.IdentityFingerprint || hash != h.PackagesHash || conflict || (reboot && !p.PriorityOnly) || waiting || lastUpdate == nil || lastReport == nil || !Fresh(*lastUpdate, now, 90*time.Minute) || !Fresh(*lastReport, now, 24*time.Hour) {
 		return errors.New("host identity, package snapshot or health gate")
 	}
 	for _, pkg := range pkgs {

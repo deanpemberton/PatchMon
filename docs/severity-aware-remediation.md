@@ -180,3 +180,7 @@ mode, fixed-candidate verification and patch authorization.
 Render individual CVE identifiers in the UI using the shared `CveLink`
 component. Links open the canonical NIST NVD description in a new tab;
 never use an advisory-supplied URL or turn a missing identifier into a link.
+
+## Scoped priority-only automatic patching
+
+An administrator may set `PATCHMON_PRIORITY_ONLY_POLICY_ID` to one existing authenticated automatic policy with a confirmed permanent backup scope. The switch does not create or authorize policies. It changes CVE findings into urgency grades, not proof of a fixed version. Known exploited and critical: 4h; high: 48h; routine and unknown: 24h by the saved policy. Available exact package candidates are checked against current signed inventory and live agent APT validation, with five concurrent hosts maximum, complete fresh backups, unchanged enrollment/exclusions, no automatic reboot, and no application-health or mandatory canary gate. Neither the signer nor installation falsely attests application health, a restore rehearsal or CVE resolution. Other policies retain strict behavior. Failed attempts may be revalidated after a cooldown; stale validation receipts are retired without changing active installs.

@@ -32,6 +32,9 @@ var (
 )
 
 type Policy struct {
+	// Runtime-only, explicitly scoped administrative opt-in; not a client field.
+	PriorityOnly bool `json:"-"`
+
 	Mode                string     `json:"mode"`
 	CriticalHours       int        `json:"critical_hours"`
 	HighHours           int        `json:"high_hours"`
@@ -65,8 +68,11 @@ func (p Policy) Validate() error {
 		}
 		seen[id] = true
 	}
-	if p.Mode == ModeAutomatic && len(p.CanaryHostIDs) == 0 {
+	if p.Mode == ModeAutomatic && !p.PriorityOnly && len(p.CanaryHostIDs) == 0 {
 		return errors.New("automatic remediation requires at least one canary host")
+	}
+	if p.PriorityOnly && (p.Mode != ModeAutomatic || p.RecoveryWaiverUntil != nil || len(p.BackupOnlyHostIDs) == 0) {
+		return errors.New("priority-only patching requires automatic mode and explicitly accepted backup scope")
 	}
 	if p.RecoveryWaiverUntil != nil && (p.Mode != ModeAutomatic || p.MaxConcurrent != 1 || len(p.CanaryHostIDs) != 1 || p.RecoveryWaiverUntil.IsZero()) {
 		return errors.New("a recovery waiver requires a single automatic canary with concurrency one")
@@ -186,14 +192,18 @@ func Evaluate(p Policy, t Target, now time.Time, lastRoutine time.Time) Decision
 	case SeverityHigh:
 		hours = p.HighHours
 	case SeverityUnknown:
-		d.Reason = "unknown_severity"
-		return d
+		if !p.PriorityOnly {
+			d.Reason = "unknown_severity"
+			return d
+		}
 	case SeverityNone:
-		d.Reason = "no_cvss_impact"
-		return d
+		if !p.PriorityOnly {
+			d.Reason = "no_cvss_impact"
+			return d
+		}
 	}
 	first := t.FirstSeen
-	if d.Severity == SeverityRoutine && !lastRoutine.IsZero() && lastRoutine.After(first) {
+	if !p.PriorityOnly && d.Severity == SeverityRoutine && !lastRoutine.IsZero() && lastRoutine.After(first) {
 		first = lastRoutine
 	}
 	deadline := first.Add(time.Duration(hours) * time.Hour)
@@ -201,6 +211,23 @@ func Evaluate(p Policy, t Target, now time.Time, lastRoutine time.Time) Decision
 	d.Overdue = !now.Before(deadline)
 	if p.Mode == ModeDisabled {
 		d.Reason = "policy_disabled"
+		return d
+	}
+	// In the explicitly authorized priority-only policy, a CVE grades
+	// urgency, not the available candidate's verified vulnerability fix.
+	// The native agent still pins and validates the APT transaction.
+	if p.PriorityOnly {
+		if !(VerifiedPackage{Name: t.Package, Installed: t.Installed, Candidate: t.Candidate}).Valid() {
+			d.Reason = "no_available_candidate"
+			return d
+		}
+		if Priority(d.Severity) > Priority(SeverityHigh) && !lastRoutine.IsZero() &&
+			now.Before(deadline) && now.Before(lastRoutine.Add(time.Duration(p.RoutineHours)*time.Hour)) {
+			d.Reason = "routine_not_due"
+			return d
+		}
+		d.Eligible = true
+		d.Reason = "available_candidate_priority_only"
 		return d
 	}
 	if t.Security && (!t.VendorApplicable || !t.FixedCandidateVerified) {

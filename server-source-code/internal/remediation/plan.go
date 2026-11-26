@@ -23,6 +23,8 @@ const validationMaxAge = 30 * time.Minute
 // Snapshot is stored in native PatchMon run history, linking the validated
 // package/version set and policy revision to the eventual execution.
 type Snapshot struct {
+	PriorityOnly bool `json:"priority_only,omitempty"`
+
 	Managed       bool              `json:"severity_remediation"`
 	PolicyID      string            `json:"policy_id"`
 	PolicyName    string            `json:"name"`
@@ -49,10 +51,10 @@ func MakeSnapshot(c Configuration, h HostEvidence, decisions []Decision) (Snapsh
 	chosen := []Decision{}
 	routine := false
 	for _, d := range decisions {
-		if !d.Eligible || slices.Contains(h.UnclassifiedSecurityUpdates, d.Target.Package) {
+		if !d.Eligible || (!c.Policy.PriorityOnly && slices.Contains(h.UnclassifiedSecurityUpdates, d.Target.Package)) {
 			continue
 		}
-		if !d.Target.Security {
+		if !c.Policy.PriorityOnly && !d.Target.Security {
 			blocked := false
 			for _, other := range decisions {
 				if other.Target.Package == d.Target.Package && other.Target.Security {
@@ -75,7 +77,7 @@ func MakeSnapshot(c Configuration, h HostEvidence, decisions []Decision) (Snapsh
 		}
 		pkgs[p.Name] = p
 		chosen = append(chosen, d)
-		if d.Severity == SeverityRoutine || d.Severity == SeverityMedium || d.Severity == SeverityLow {
+		if d.Severity == SeverityRoutine || d.Severity == SeverityMedium || d.Severity == SeverityLow || (c.Policy.PriorityOnly && Priority(d.Severity) > Priority(SeverityHigh)) {
 			routine = true
 		}
 	}
@@ -84,9 +86,9 @@ func MakeSnapshot(c Configuration, h HostEvidence, decisions []Decision) (Snapsh
 		list = append(list, p)
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
-	s := Snapshot{Managed: true, PolicyID: c.PolicyID, PolicyName: c.Name, Revision: c.Revision, HostID: h.HostID, Identity: h.IdentityFingerprint, Packages: list, Decisions: chosen, Routine: routine}
+	s := Snapshot{PriorityOnly: c.Policy.PriorityOnly, Managed: true, PolicyID: c.PolicyID, PolicyName: c.Name, Revision: c.Revision, HostID: h.HostID, Identity: h.IdentityFingerprint, Packages: list, Decisions: chosen, Routine: routine}
 	s.RolloutDigest = PackageDigest(list)
-	raw, _ := json.Marshal([]any{s.PolicyID, s.Revision, s.HostID, s.Identity, s.RolloutDigest})
+	raw, _ := json.Marshal(s.digestFields())
 	sum := sha256.Sum256(raw)
 	s.Digest = hex.EncodeToString(sum[:])
 	if err := s.Validate(); err != nil {
@@ -94,6 +96,14 @@ func MakeSnapshot(c Configuration, h HostEvidence, decisions []Decision) (Snapsh
 	}
 	return s, nil
 }
+func (s Snapshot) digestFields() []any {
+	fields := []any{s.PolicyID, s.Revision, s.HostID, s.Identity, s.RolloutDigest}
+	if s.PriorityOnly {
+		fields = append(fields, "priority-only-v1")
+	}
+	return fields
+}
+
 func (s Snapshot) Validate() error {
 	if !s.Managed || s.PolicyID == "" || s.HostID == "" || s.Identity == "" || s.Revision < 1 || len(s.Packages) == 0 || len(s.Packages) > 64 {
 		return errors.New("invalid remediation snapshot")
@@ -108,7 +118,7 @@ func (s Snapshot) Validate() error {
 	if s.RolloutDigest != PackageDigest(s.Packages) {
 		return errors.New("invalid rollout digest")
 	}
-	raw, _ := json.Marshal([]any{s.PolicyID, s.Revision, s.HostID, s.Identity, s.RolloutDigest})
+	raw, _ := json.Marshal(s.digestFields())
 	sum := sha256.Sum256(raw)
 	if s.Digest != hex.EncodeToString(sum[:]) {
 		return errors.New("invalid plan digest")
@@ -146,6 +156,24 @@ func (s Snapshot) Names() []string {
 	return names
 }
 
+// Rank hosts by the highest severity of a currently available candidate.
+func HostPriority(e Evidence, id string) int {
+	rank := Priority(SeverityUnknown) + 1
+	h, ok := FindHost(e, id)
+	if !ok {
+		return rank
+	}
+	for _, t := range h.Targets {
+		if !(VerifiedPackage{Name: t.Package, Installed: t.Installed, Candidate: t.Candidate}).Valid() {
+			continue
+		}
+		if n := Priority(Severity(t)); n < rank {
+			rank = n
+		}
+	}
+	return rank
+}
+
 func FindHost(e Evidence, id string) (HostEvidence, bool) {
 	for _, h := range e.Hosts {
 		if h.HostID == id {
@@ -160,7 +188,7 @@ func (s Snapshot) MatchesEvidence(h HostEvidence) bool {
 		return false
 	}
 	for _, pkg := range s.Packages {
-		if slices.Contains(h.UnclassifiedSecurityUpdates, pkg.Name) {
+		if !s.PriorityOnly && slices.Contains(h.UnclassifiedSecurityUpdates, pkg.Name) {
 			return false
 		}
 		found := false
@@ -172,7 +200,7 @@ func (s Snapshot) MatchesEvidence(h HostEvidence) bool {
 			}
 		}
 		for _, t := range h.Targets {
-			if t.Package == pkg.Name && t.Installed == pkg.Installed && t.Candidate == pkg.Candidate && t.FixedCandidateVerified && ((!t.Security && !security) || (t.Security && t.VendorApplicable && Severity(t) != SeverityUnknown && Severity(t) != SeverityNone)) {
+			if t.Package == pkg.Name && t.Installed == pkg.Installed && t.Candidate == pkg.Candidate && (s.PriorityOnly || (t.FixedCandidateVerified && ((!t.Security && !security) || (t.Security && t.VendorApplicable && Severity(t) != SeverityUnknown && Severity(t) != SeverityNone)))) {
 				found = true
 				break
 			}
@@ -229,6 +257,52 @@ func LatestAttempt(ctx context.Context, d *database.DB, s Snapshot) (string, err
 		return "", nil
 	}
 	return id, err
+}
+
+// Expire unused native validation receipts. Never change executing or approved
+// runs. This prevents a changed candidate or expired dry run blocking all slots.
+func ExpirePriorityValidations(ctx context.Context, d *database.DB, c Configuration, e Evidence, now time.Time) error {
+	if !c.Policy.PriorityOnly {
+		return nil
+	}
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	rows, err := tx.Query(ctx, `SELECT id,policy_snapshot,completed_at FROM patch_runs
+	WHERE policy_id=$1 AND status='validated' AND dry_run AND policy_snapshot->>'priority_only'='true'`, c.PolicyID)
+	if err != nil {
+		return err
+	}
+	var expired []string
+	for rows.Next() {
+		var id string
+		var raw []byte
+		var completed *time.Time
+		if err = rows.Scan(&id, &raw, &completed); err != nil {
+			rows.Close()
+			return err
+		}
+		s, managed, parseErr := ParseSnapshot(raw)
+		h, found := FindHost(e, s.HostID)
+		if parseErr != nil || !managed || s.Revision != c.Revision || completed == nil ||
+			!Fresh(*completed, now, validationMaxAge) || !found || !s.MatchesEvidence(h) {
+			expired = append(expired, id)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range expired {
+		_, err = tx.Exec(ctx, "UPDATE patch_runs SET status='cancelled',error_message='Priority validation expired or changed',completed_at=NOW(),updated_at=NOW() WHERE id=$1 AND status='validated' AND dry_run", id)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func ActiveCount(ctx context.Context, d *database.DB, policy string) (int, error) {
@@ -318,7 +392,7 @@ func Recheck(ctx context.Context, d *database.DB, s Snapshot, now time.Time, rea
 	if err != nil {
 		return c, err
 	}
-	if c.DelayType != "immediate" || c.Revision != s.Revision || c.Policy.Mode == ModeDisabled || c.Policy.Mode == ModeShadow || real && !ExecutionEnabled() {
+	if c.DelayType != "immediate" || c.Revision != s.Revision || c.Policy.PriorityOnly != s.PriorityOnly || c.Policy.Mode == ModeDisabled || c.Policy.Mode == ModeShadow || real && !ExecutionEnabled() {
 		return c, errors.New("remediation paused or changed")
 	}
 	id, err := ResolvePolicy(ctx, d, s.HostID)
@@ -339,7 +413,7 @@ func Recheck(ctx context.Context, d *database.DB, s Snapshot, now time.Time, rea
 	if err = CheckHost(ctx, d, h, s.Packages, now, c.Policy); err != nil {
 		return c, err
 	}
-	if c.Policy.Mode == ModeAutomatic {
+	if c.Policy.Mode == ModeAutomatic && !c.Policy.PriorityOnly {
 		ok, err = CanaryPassed(ctx, d, c, e, s, now)
 		if err != nil {
 			return c, err

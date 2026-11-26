@@ -49,8 +49,18 @@ func (h *AutoPatchDispatchHandler) processRemediation(ctx context.Context) error
 		if err != nil {
 			return err
 		}
-		// Canary-first ordering, independent of group enumeration.
+		if err = remediation.ExpirePriorityValidations(ctx, h.db, c, e, now); err != nil {
+			return err
+		}
+		// Prioritize hosts with urgent available candidates, not static canaries.
 		sort.Slice(hostIDs, func(i, j int) bool {
+			if c.Policy.PriorityOnly {
+				a, b := remediation.HostPriority(e, hostIDs[i]), remediation.HostPriority(e, hostIDs[j])
+				if a != b {
+					return a < b
+				}
+				return hostIDs[i] < hostIDs[j]
+			}
 			a, b := slices.Contains(c.Policy.CanaryHostIDs, hostIDs[i]), slices.Contains(c.Policy.CanaryHostIDs, hostIDs[j])
 			if a != b {
 				return a
@@ -130,7 +140,7 @@ func (h *AutoPatchDispatchHandler) evaluateRemediationHost(ctx context.Context, 
 		row.Blocker = err.Error()
 		return nil
 	}
-	if c.Policy.Mode == remediation.ModeAutomatic {
+	if c.Policy.Mode == remediation.ModeAutomatic && !c.Policy.PriorityOnly {
 		passed, err := remediation.CanaryPassed(ctx, h.db, c, e, s, now)
 		if err != nil {
 			return err
@@ -161,41 +171,49 @@ func (h *AutoPatchDispatchHandler) evaluateRemediationHost(ctx context.Context, 
 			return errors.New("attempt vanished")
 		}
 		row.RunID = run.ID
-		if run.Status != "validated" || !run.DryRun {
-			row.Blocker = "existing_attempt_" + run.Status
+		if c.Policy.PriorityOnly && run.CompletedAt.Valid && now.Sub(run.CompletedAt.Time) >= 30*time.Minute &&
+			(run.Status == "failed" || run.Status == "timed_out" ||
+				(run.Status == "cancelled" && run.DryRun && run.ErrorMessage != nil && *run.ErrorMessage == "Priority validation expired or changed")) {
+			// A terminal failed attempt may be revalidated against current
+			// inventory, backup evidence and the same explicit policy.
+			row.RunID = ""
+		} else {
+			if run.Status != "validated" || !run.DryRun {
+				row.Blocker = "existing_attempt_" + run.Status
+				return nil
+			}
+			if c.Policy.Mode != remediation.ModeAutomatic {
+				row.Blocker = "awaiting_browser_approval"
+				return nil
+			}
+			if err = remediation.ValidateDryRun(run, s, now); err != nil {
+				row.Blocker = "validation_expired_or_unsafe"
+				return nil
+			}
+			// Transactional native approval: no manufactured user/session/token.
+			if _, err = remediation.Recheck(ctx, h.db, s, now, true); err != nil {
+				row.Blocker = err.Error()
+				return nil
+			}
+			raw, err := json.Marshal(s)
+			if err != nil {
+				return err
+			}
+			newID := uuid.New().String()
+			task, err := NewRunPatchTask(RunPatchPayload{HostID: hostID, ApiID: host.ApiID, PatchRunID: newID, PatchType: "patch_package", PackageNames: s.Names()})
+			if err != nil {
+				return err
+			}
+			if err = h.patchRuns.ApproveAndCreateRun(ctx, run.ID, nil, newID, hostID, "patch-run-"+newID, "patch_package", nil, s.Names(), nil, nil, &c.PolicyID, &c.Name, raw, nil); err != nil {
+				return err
+			}
+			if _, err = h.queueClient.Enqueue(task); err != nil {
+				_, _ = h.patchRuns.Cancel(context.WithoutCancel(ctx), newID, "Failed to queue remediation")
+				return err
+			}
+			row.RunID = newID
 			return nil
 		}
-		if c.Policy.Mode != remediation.ModeAutomatic {
-			row.Blocker = "awaiting_browser_approval"
-			return nil
-		}
-		if err = remediation.ValidateDryRun(run, s, now); err != nil {
-			row.Blocker = "validation_expired_or_unsafe"
-			return nil
-		}
-		// Transactional native approval: no manufactured user/session/token.
-		if _, err = remediation.Recheck(ctx, h.db, s, now, true); err != nil {
-			row.Blocker = err.Error()
-			return nil
-		}
-		raw, err := json.Marshal(s)
-		if err != nil {
-			return err
-		}
-		newID := uuid.New().String()
-		task, err := NewRunPatchTask(RunPatchPayload{HostID: hostID, ApiID: host.ApiID, PatchRunID: newID, PatchType: "patch_package", PackageNames: s.Names()})
-		if err != nil {
-			return err
-		}
-		if err = h.patchRuns.ApproveAndCreateRun(ctx, run.ID, nil, newID, hostID, "patch-run-"+newID, "patch_package", nil, s.Names(), nil, nil, &c.PolicyID, &c.Name, raw, nil); err != nil {
-			return err
-		}
-		if _, err = h.queueClient.Enqueue(task); err != nil {
-			_, _ = h.patchRuns.Cancel(context.WithoutCancel(ctx), newID, "Failed to queue remediation")
-			return err
-		}
-		row.RunID = newID
-		return nil
 	}
 	// Native unique active-run index is the last line of defence. Include
 	// scheduled/disconnected/validated runs in the fleet concurrency limit.
@@ -211,7 +229,7 @@ func (h *AutoPatchDispatchHandler) evaluateRemediationHost(ctx context.Context, 
 		row.Blocker = "concurrency_limit"
 		return nil
 	}
-	if c.Policy.Mode == remediation.ModeAutomatic && slices.Contains(c.Policy.CanaryHostIDs, hostID) && active > 0 {
+	if c.Policy.Mode == remediation.ModeAutomatic && !c.Policy.PriorityOnly && slices.Contains(c.Policy.CanaryHostIDs, hostID) && active > 0 {
 		row.Blocker = "canary_serial_limit"
 		return nil
 	}

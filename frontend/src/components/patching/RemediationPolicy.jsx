@@ -76,10 +76,9 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 	return (
 		<form onSubmit={save} className="space-y-3">
 			<p className="text-sm text-secondary-600 dark:text-secondary-300">
-				Requires an immediate patch policy, signed advisory evidence, a complete
-				current backup, and a compatible APT agent. Tested recovery is required
-				unless explicitly accepted as a policy risk. Unknown severity is never
-				treated as low.
+				{configuration.priority_only
+					? "Priority-only: CVE severity sets urgency. Available APT updates are version-pinned and validated; no application-health or canary gate and no claim that installation fixes a CVE. A current complete backup and authorized scope are required."
+					: "Requires an immediate policy, signed fix evidence, a complete backup, verified recovery or explicit acceptance, health checks and a compatible APT agent."}
 			</p>
 			<label htmlFor={`${prefix}-mode`} className="block text-sm font-medium">
 				Execution mode
@@ -97,7 +96,9 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 						value={value}
 						disabled={value === "automatic" && !executionEnabled}
 					>
-						{label}
+						{configuration.priority_only && value === "automatic"
+							? "Automatic — package priority"
+							: label}
 					</option>
 				))}
 			</select>
@@ -128,7 +129,9 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 			</div>
 			<fieldset>
 				<legend className="text-sm font-medium">
-					Canary hosts (must belong to this policy)
+					{configuration.priority_only
+						? "Canary preferences (not required for priority-only execution)"
+						: "Canary hosts (must belong to this policy)"}
 				</legend>
 				<div className="max-h-40 overflow-auto space-y-1">
 					{hosts.map((host) => (
