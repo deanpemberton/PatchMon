@@ -194,7 +194,7 @@ func HostPriority(e Evidence, id string) int {
 		if !(VerifiedPackage{Name: t.Package, Installed: t.Installed, Candidate: t.Candidate}).Valid() {
 			continue
 		}
-		if n := Priority(Severity(t)); n < rank {
+		if n := Priority(UpdateSeverity(t, h.UnclassifiedSecurityUpdates)); n < rank {
 			rank = n
 		}
 	}
