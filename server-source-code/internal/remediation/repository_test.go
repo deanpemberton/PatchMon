@@ -51,7 +51,7 @@ func TestMigrationAndRemediationRepository(t *testing.T) {
 		t.Fatalf("upgrade legacy schema: %v", err)
 	}
 	version, dirty, err := m.Version()
-	if err != nil || version != 67 || dirty {
+	if err != nil || version != 68 || dirty {
 		t.Fatalf("unexpected migrated schema: version=%d dirty=%t error=%v", version, dirty, err)
 	}
 	var retained int

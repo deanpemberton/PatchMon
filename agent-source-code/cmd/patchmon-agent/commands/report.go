@@ -209,6 +209,9 @@ func collectReportData() (*collectedReport, error) {
 		PackageManager:         detectedPackageMgr,
 		AgentExecutionMs:       &executionMs,
 	}
+	if detectedPackageMgr == "apt" {
+		payload.APTProvenance = collectAPTProvenance()
+	}
 	return &collectedReport{Payload: payload, StartAt: startTime}, nil
 }
 
@@ -653,8 +656,8 @@ func runCheckIn(ctx context.Context, forceFull bool) error {
 	}
 	payload.Hashes = hashes
 
-	if forceFull {
-		logger.WithField("every_n_ticks", forcedFullReportInterval).Info("Sending periodic forced full report")
+	if forceFull || payload.PackageManager == "apt" {
+		logger.WithField("every_n_ticks", forcedFullReportInterval).Info("Sending periodic full report with current package evidence")
 		return deliverReport(ctx, payload)
 	}
 
@@ -831,6 +834,7 @@ func sendPartialReport(ctx context.Context, httpClient *client.Client, full *mod
 	if wantPackages {
 		partial.Packages = full.Packages
 		partial.PackageManager = full.PackageManager
+		partial.APTProvenance = full.APTProvenance
 		partial.WindowsUpdatesOmitted = full.WindowsUpdatesOmitted
 	} else {
 		partial.Packages = nil
