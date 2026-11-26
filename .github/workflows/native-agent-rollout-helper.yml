@@ -37,3 +37,5 @@ jobs:
           tag="native-agent-rollout-${GITHUB_SHA:0:12}"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then exit 1; fi
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Native agent-only rollout helper" --notes "Local administrator helper using pinned Asynq SDK, exact update_agent task only. No host data or credentials." native-agent-rollout SHA256SUMS BUILD_COMMIT
+
+# Trigger exact helper build on the prepared rollout branch.
