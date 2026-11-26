@@ -79,7 +79,7 @@ const PACKAGE_COLUMN_WIDTH = {
 	packageHosts: "w-28",
 	status: "w-56",
 	cvssScore: "w-24",
-	severity: "w-32",
+	severity: "w-48",
 	latestVersion: "w-40",
 	sourceRepos: "w-48",
 };
@@ -92,17 +92,34 @@ const PACKAGE_SEVERITY = {
 	low: { label: "Low", className: "badge-secondary" },
 	none: { label: "None (CVSS 0)", className: "badge-secondary" },
 	unknown: { label: "Unknown", className: "badge-secondary" },
+	unclassified_security: { label: "Security — urgent", className: "badge-warning" },
+	routine: { label: "Routine", className: "badge-secondary" },
 };
+
+function priorityStatus(pkg) {
+	const raw = pkg.priorityStatus || "";
+	const labels = {
+		no_update_available: "No update available",
+		awaiting_evidence_or_outside_scope: "Awaiting evidence / outside policy",
+		awaiting_evaluation: "Awaiting scheduler evaluation",
+		dispatched: "Dispatched",
+		eligible: "Eligible — awaiting dispatch",
+		routine_not_due: "Waiting for routine cycle",
+		concurrency_limit: "Waiting for execution slot",
+	};
+	return raw.split(", ").filter(Boolean).map((s) => labels[s] || s.replaceAll("_", " ")).join("; ");
+}
 
 function packageAdvisoryTitle(pkg) {
 	const count = pkg.advisoryHostCount || 0;
-	if (!count) {
-		return "No fresh matched advisory evidence. This does not establish that the package is safe.";
-	}
+	const scope = pkg.updatePriorityPending ? "Available updates only." : "Installed-version observations; no update available.";
 	const source = Number.isFinite(pkg.cvssScore)
-		? `Highest known CVSS v${pkg.cvssVersion || "?"} (${pkg.cvssSource || "source unknown"}).`
-		: "Applicable advisory evidence without a numeric CVSS score.";
-	return `${source} ${pkg.advisoryCveCount} matched CVE(s) on ${count} host(s) in this view. Other or unscored findings may exist; severity does not authorize patching.`;
+		? `CVSS v${pkg.cvssVersion || "?"} (${pkg.cvssSource || "source unknown"}).`
+		: "No numeric CVSS verified.";
+	const priority = pkg.severity === "unclassified_security"
+		? "Security update without a verified applicable score; urgent four-hour policy."
+		: "";
+	return [scope, source, priority, `${count} matched host(s); ${pkg.advisoryCveCount || 0} selected CVE(s).`, priorityStatus(pkg), pkg.priorityFirstSeen && `Discovered: ${new Date(pkg.priorityFirstSeen).toLocaleString()}`, pkg.priorityDeadline && `Deadline: ${new Date(pkg.priorityDeadline).toLocaleString()}`, "Priority grades the available update, not proof of a verified vulnerability fix."].filter(Boolean).join(" ");
 }
 
 const WindowsPackageTags = ({ info }) => {
@@ -193,7 +210,7 @@ const Packages = () => {
 			{ id: "packageHosts", label: "Installed On", visible: true, order: 1 },
 			{ id: "status", label: "Status", visible: true, order: 2 },
 			{ id: "cvssScore", label: "CVSS", visible: true, order: 3 },
-			{ id: "severity", label: "Severity", visible: true, order: 4 },
+			{ id: "severity", label: "Update priority", visible: true, order: 4 },
 			{ id: "latestVersion", label: "Latest Version", visible: true, order: 5 },
 			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 6 },
 		];
@@ -603,7 +620,7 @@ const Packages = () => {
 			{ id: "packageHosts", label: "Installed On", visible: true, order: 1 },
 			{ id: "status", label: "Status", visible: true, order: 2 },
 			{ id: "cvssScore", label: "CVSS", visible: true, order: 3 },
-			{ id: "severity", label: "Severity", visible: true, order: 4 },
+			{ id: "severity", label: "Update priority", visible: true, order: 4 },
 			{ id: "latestVersion", label: "Latest Version", visible: true, order: 5 },
 			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 6 },
 		];
@@ -730,13 +747,20 @@ const Packages = () => {
 			case "severity": {
 				const severity =
 					PACKAGE_SEVERITY[pkg.severity] || PACKAGE_SEVERITY.unknown;
+				const pending = pkg.updatePriorityPending;
 				return (
-					<span
-						className={severity.className}
-						title={packageAdvisoryTitle(pkg)}
-					>
-						{severity.label}
-					</span>
+					<div className="space-y-1" title={packageAdvisoryTitle(pkg)}>
+						<span className={severity.className}>
+							{severity.label}{!pending && ["critical", "exploited", "high", "medium", "low"].includes(pkg.severity) ? " — no update" : ""}
+						</span>
+						{pending && (
+							<div className="text-xs text-secondary-500 dark:text-secondary-400">
+								{priorityStatus(pkg)}
+								{pkg.priorityDeadline && <div>Due {new Date(pkg.priorityDeadline).toLocaleString()}</div>}
+								{pkg.priorityFirstSeen && <div>Seen {new Date(pkg.priorityFirstSeen).toLocaleString()}</div>}
+							</div>
+						)}
+					</div>
 				);
 			}
 			case "latestVersion":
