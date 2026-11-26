@@ -63,6 +63,8 @@ const PACKAGES_SORTABLE_COLUMNS = new Set([
 	"name",
 	"packageHosts",
 	"status",
+	"cvssScore",
+	"severity",
 	"latestVersion",
 ]);
 
@@ -76,9 +78,72 @@ function formatRepoName(name) {
 const PACKAGE_COLUMN_WIDTH = {
 	packageHosts: "w-28",
 	status: "w-56",
+	cvssScore: "w-24",
+	severity: "w-48",
 	latestVersion: "w-40",
 	sourceRepos: "w-48",
 };
+
+const PACKAGE_SEVERITY = {
+	exploited: { label: "Known Exploited", className: "badge-danger" },
+	critical: { label: "Critical", className: "badge-danger" },
+	high: { label: "High", className: "badge-warning" },
+	medium: { label: "Medium", className: "badge-warning" },
+	low: { label: "Low", className: "badge-secondary" },
+	none: { label: "None (CVSS 0)", className: "badge-secondary" },
+	unknown: { label: "Unknown", className: "badge-secondary" },
+	unclassified_security: {
+		label: "Security — urgent",
+		className: "badge-warning",
+	},
+	routine: { label: "Routine", className: "badge-secondary" },
+};
+
+function priorityStatus(pkg) {
+	const raw = pkg.priorityStatus || "";
+	const labels = {
+		no_update_available: "No update available",
+		awaiting_evidence_or_outside_scope: "Awaiting evidence / outside policy",
+		awaiting_evaluation: "Awaiting scheduler evaluation",
+		dispatched: "Dispatched",
+		eligible: "Eligible — awaiting dispatch",
+		routine_not_due: "Waiting for routine cycle",
+		concurrency_limit: "Waiting for execution slot",
+	};
+	return raw
+		.split(", ")
+		.filter(Boolean)
+		.map((s) => labels[s] || s.replaceAll("_", " "))
+		.join("; ");
+}
+
+function packageAdvisoryTitle(pkg) {
+	const count = pkg.advisoryHostCount || 0;
+	const scope = pkg.updatePriorityPending
+		? "Available updates only."
+		: "Installed-version observations; no update available.";
+	const source = Number.isFinite(pkg.cvssScore)
+		? `CVSS v${pkg.cvssVersion || "?"} (${pkg.cvssSource || "source unknown"}).`
+		: "No numeric CVSS verified.";
+	const priority =
+		pkg.severity === "unclassified_security"
+			? "Security update without a verified applicable score; urgent four-hour policy."
+			: "";
+	return [
+		scope,
+		source,
+		priority,
+		`${count} matched host(s); ${pkg.advisoryCveCount || 0} selected CVE(s).`,
+		priorityStatus(pkg),
+		pkg.priorityFirstSeen &&
+			`Discovered: ${new Date(pkg.priorityFirstSeen).toLocaleString()}`,
+		pkg.priorityDeadline &&
+			`Deadline: ${new Date(pkg.priorityDeadline).toLocaleString()}`,
+		"Priority grades the available update, not proof of a verified vulnerability fix.",
+	]
+		.filter(Boolean)
+		.join(" ");
+}
 
 const WindowsPackageTags = ({ info }) => {
 	const source = windowsSourceLabel(info);
@@ -167,19 +232,35 @@ const Packages = () => {
 			{ id: "name", label: "Package", visible: true, order: 0 },
 			{ id: "packageHosts", label: "Installed On", visible: true, order: 1 },
 			{ id: "status", label: "Status", visible: true, order: 2 },
-			{ id: "latestVersion", label: "Latest Version", visible: true, order: 3 },
-			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 4 },
+			{ id: "cvssScore", label: "CVSS", visible: true, order: 3 },
+			{ id: "severity", label: "Update priority", visible: true, order: 4 },
+			{ id: "latestVersion", label: "Latest Version", visible: true, order: 5 },
+			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 6 },
 		];
 
 		const saved = localStorage.getItem("packages-column-config");
 		if (saved) {
 			try {
 				const savedConfig = JSON.parse(saved);
-				// Merge with defaults to handle new columns
-				return defaultConfig.map((defaultCol) => {
-					const savedCol = savedConfig.find((col) => col.id === defaultCol.id);
-					return savedCol ? { ...defaultCol, ...savedCol } : defaultCol;
-				});
+				// Preserve saved visibility/order, inserting newly introduced columns
+				// next to Status without colliding with existing saved positions.
+				const existing = defaultConfig
+					.filter((col) => savedConfig.some((saved) => saved.id === col.id))
+					.map((col) => ({
+						...col,
+						...savedConfig.find((saved) => saved.id === col.id),
+					}))
+					.sort((a, b) => a.order - b.order);
+				const missing = defaultConfig.filter(
+					(col) => !existing.some((saved) => saved.id === col.id),
+				);
+				const statusIndex = existing.findIndex((col) => col.id === "status");
+				existing.splice(
+					statusIndex < 0 ? existing.length : statusIndex + 1,
+					0,
+					...missing,
+				);
+				return existing.map((col, order) => ({ ...col, order }));
 			} catch (_e) {
 				localStorage.removeItem("packages-column-config");
 			}
@@ -520,7 +601,9 @@ const Packages = () => {
 			setSortDirection(sortDirection === "asc" ? "desc" : "asc");
 		} else {
 			setSortField(field);
-			setSortDirection("asc");
+			setSortDirection(
+				field === "cvssScore" || field === "severity" ? "desc" : "asc",
+			);
 		}
 	};
 
@@ -559,8 +642,10 @@ const Packages = () => {
 			{ id: "name", label: "Package", visible: true, order: 0 },
 			{ id: "packageHosts", label: "Installed On", visible: true, order: 1 },
 			{ id: "status", label: "Status", visible: true, order: 2 },
-			{ id: "latestVersion", label: "Latest Version", visible: true, order: 3 },
-			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 4 },
+			{ id: "cvssScore", label: "CVSS", visible: true, order: 3 },
+			{ id: "severity", label: "Update priority", visible: true, order: 4 },
+			{ id: "latestVersion", label: "Latest Version", visible: true, order: 5 },
+			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 6 },
 		];
 		updateColumnConfig(defaultConfig);
 	};
@@ -669,6 +754,50 @@ const Packages = () => {
 					</span>
 				) : (
 					<span className="badge-warning">Update Available</span>
+				);
+			}
+			case "cvssScore":
+				return (
+					<span
+						className="text-sm tabular-nums"
+						title={packageAdvisoryTitle(pkg)}
+					>
+						{Number.isFinite(pkg.cvssScore)
+							? pkg.cvssScore.toFixed(1)
+							: "Unknown"}
+					</span>
+				);
+			case "severity": {
+				const severity =
+					PACKAGE_SEVERITY[pkg.severity] || PACKAGE_SEVERITY.unknown;
+				const pending = pkg.updatePriorityPending;
+				return (
+					<div className="space-y-1" title={packageAdvisoryTitle(pkg)}>
+						<span className={severity.className}>
+							{severity.label}
+							{!pending &&
+							["critical", "exploited", "high", "medium", "low"].includes(
+								pkg.severity,
+							)
+								? " — no update"
+								: ""}
+						</span>
+						{pending && (
+							<div className="text-xs text-secondary-500 dark:text-secondary-400">
+								{priorityStatus(pkg)}
+								{pkg.priorityDeadline && (
+									<div>
+										Due {new Date(pkg.priorityDeadline).toLocaleString()}
+									</div>
+								)}
+								{pkg.priorityFirstSeen && (
+									<div>
+										Seen {new Date(pkg.priorityFirstSeen).toLocaleString()}
+									</div>
+								)}
+							</div>
+						)}
+					</div>
 				);
 			}
 			case "latestVersion":

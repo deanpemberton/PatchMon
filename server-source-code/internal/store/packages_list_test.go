@@ -23,8 +23,15 @@ func TestListPackagesSQLHostScopedSource(t *testing.T) {
 	}
 
 	fleet, _ := listPackagesSQL(packagesListFilters{}, "status", "asc", 50, 0)
-	if !strings.Contains(fleet, "LEFT JOIN mv_package_stats") || strings.Contains(fleet, "host_packages") {
-		t.Fatal("unfiltered list must stay on mv_package_stats with no host_packages scan")
+	if !strings.Contains(fleet, "LEFT JOIN mv_package_stats") {
+		t.Fatal("unfiltered list must continue to use mv_package_stats for fleet totals")
+	}
+	// Pending priority must reflect exact live candidates, including when
+	// signed evidence is absent. The additional inventory scan is bounded
+	// to pending rows; it must not replace the fleet statistics source.
+	if !strings.Contains(fleet, "WITH pending_scope AS") || !strings.Contains(fleet, "WHERE hp.needs_update AND hp.available_version IS DISTINCT FROM hp.current_version") ||
+		!strings.Contains(fleet, "LEFT JOIN pending_scope ps ON ps.package_id=p.id") {
+		t.Fatal("fleet priority must be based on live pending installations")
 	}
 
 	sec := "false"
@@ -97,11 +104,17 @@ func TestListPackagesHostScopedStatus(t *testing.T) {
 	want(fleet["x"], 2, 1, 1, "2.0")
 	want(fleet["y"], 2, 1, 0, "5.0")
 	want(fleet["z"], 2, 2, 1, "9.0")
+	if !fleet["x"].UpdatePriorityPending || fleet["x"].Severity != "unknown" || fleet["x"].PriorityStatus != "awaiting_evidence_or_outside_scope" {
+		t.Fatalf("pending security update without evidence was not explicitly unclassified: %+v", fleet["x"].PackageAdvisorySummary)
+	}
 
 	onB, order := list(b.ID, "status", "asc", "")
 	want(onB["x"], 1, 0, 0, "2.0")
 	want(onB["y"], 1, 1, 0, "5.0")
 	want(onB["z"], 1, 1, 0, "8.5")
+	if onB["x"].UpdatePriorityPending || onB["x"].PriorityStatus != "no_update_available" || !onB["y"].UpdatePriorityPending {
+		t.Fatal("pending priority leaked from a different host")
+	}
 	if strings.Join(order, ",") != "y,z,x" {
 		t.Fatalf("status sort on host B = %v, want y,z (update) before x (up to date)", order)
 	}

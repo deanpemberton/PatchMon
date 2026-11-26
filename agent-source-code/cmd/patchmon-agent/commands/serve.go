@@ -516,7 +516,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					if runtime.GOOS == "windows" {
 						err = runPatchWindows(msg.patchRunID, msg.windowsPatch, msg.patchParseError)
 					} else {
-						err = runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun)
+						err = runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun, msg.rebootIfRequired, msg.verifiedTargets...)
 					}
 					switch {
 					case errors.Is(err, errPatchRunStopped):
@@ -525,6 +525,15 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 						logger.WithField("error", logutil.Sanitize(err.Error())).Warn("run_patch failed")
 					default:
 						logger.Info("run_patch completed successfully")
+					}
+				}(m)
+			case "reboot_host":
+				go func(msg wsMsg) {
+					// ExecuteReboot clamps delay_minutes to [0, 60] defensively.
+					if err := system.New(logger).ExecuteReboot(msg.rebootDelayMinutes, msg.rebootReason); err != nil {
+						logger.WithError(err).Warn("reboot_host failed to schedule")
+					} else {
+						logger.WithField("delay_minutes", msg.rebootDelayMinutes).Info("reboot_host scheduled")
 					}
 				}(m)
 			case "compliance_scan":
@@ -1425,13 +1434,18 @@ type wsMsg struct {
 	sshProxyCols       int    // Terminal columns
 	sshProxyRows       int    // Terminal rows
 	// run_patch fields
-	patchRunID      string
-	patchType       string
-	packageNames    []string
-	dryRun          bool
-	windowsPatch    packages.WindowsPatchRequest
-	patchParseError string
-	sshProxyData    string // SSH input data
+	patchRunID       string
+	patchType        string
+	verifiedTargets  []verifiedTarget
+	packageNames     []string
+	dryRun           bool
+	windowsPatch     packages.WindowsPatchRequest
+	patchParseError  string
+	rebootIfRequired bool   // reboot after success iff host still needs it
+	sshProxyData     string // SSH input data
+	// reboot_host fields
+	rebootDelayMinutes int
+	rebootReason       string
 	// RDP proxy fields
 	rdpProxySessionID string // Unique session ID for RDP proxy
 	rdpProxyHost      string // RDP target host (default localhost)
@@ -1935,14 +1949,19 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 			Rows       int    `json:"rows"`        // Terminal rows
 			Data       string `json:"data"`        // SSH input data
 			// run_patch fields
-			PatchRunID     string                        `json:"patch_run_id"`
-			PatchType      string                        `json:"patch_type"`
-			PackageName    string                        `json:"package_name"`
-			PackageNames   []string                      `json:"package_names"`
-			DryRun         bool                          `json:"dry_run"`
-			Targets        []packages.WindowsPatchTarget `json:"targets"`
-			IncludeUpdates *bool                         `json:"include_updates"`
-			IncludeApps    *bool                         `json:"include_apps"`
+			PatchRunID       string                        `json:"patch_run_id"`
+			PatchType        string                        `json:"patch_type"`
+			VerifiedPackages []verifiedTarget              `json:"verified_packages"`
+			PackageName      string                        `json:"package_name"`
+			PackageNames     []string                      `json:"package_names"`
+			DryRun           bool                          `json:"dry_run"`
+			RebootIfRequired bool                          `json:"reboot_if_required"`
+			Targets          []packages.WindowsPatchTarget `json:"targets"`
+			IncludeUpdates   *bool                         `json:"include_updates"`
+			IncludeApps      *bool                         `json:"include_apps"`
+			// reboot_host fields
+			RebootDelayMinutes int    `json:"reboot_delay_minutes"`
+			RebootReason       string `json:"reboot_reason"`
 		}
 		if err := json.Unmarshal(data, &payload); err != nil {
 			logger.WithError(err).WithField("message_bytes", len(data)).Warn("Failed to parse WebSocket message")
@@ -1977,8 +1996,21 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 			if patchType == "" {
 				patchType = "patch_all"
 			}
-			if patchType != "patch_all" && patchType != "patch_package" {
+			if patchType != "patch_all" && patchType != "patch_package" && patchType != verifiedPatchType {
 				logger.WithField("patch_type", logutil.Sanitize(patchType)).Warn("Invalid patch_type in run_patch")
+				continue
+			}
+			if patchType == verifiedPatchType {
+				if runtime.GOOS != "linux" || payload.RebootIfRequired || verifyTargetSyntax(payload.VerifiedPackages) != nil {
+					logger.Warn("Invalid verified patch request")
+					go rejectPatchRun(payload.PatchRunID, "Invalid verified patch request")
+					continue
+				}
+				dispatchWSMessage(out, wsMsg{
+					kind: "run_patch", patchRunID: payload.PatchRunID,
+					patchType: patchType, dryRun: payload.DryRun,
+					verifiedTargets: payload.VerifiedPackages,
+				})
 				continue
 			}
 			if runtime.GOOS == "windows" {
@@ -2033,17 +2065,19 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 				continue
 			}
 			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-				"patch_run_id":  payload.PatchRunID,
-				"patch_type":    patchType,
-				"package_names": packageNames,
-				"dry_run":       payload.DryRun,
+				"patch_run_id":       payload.PatchRunID,
+				"patch_type":         patchType,
+				"package_names":      packageNames,
+				"dry_run":            payload.DryRun,
+				"reboot_if_required": payload.RebootIfRequired,
 			})).Info("run_patch received")
 			dispatchWSMessage(out, wsMsg{
-				kind:         "run_patch",
-				patchRunID:   payload.PatchRunID,
-				patchType:    patchType,
-				packageNames: packageNames,
-				dryRun:       payload.DryRun,
+				kind:             "run_patch",
+				patchRunID:       payload.PatchRunID,
+				patchType:        patchType,
+				packageNames:     packageNames,
+				dryRun:           payload.DryRun,
+				rebootIfRequired: payload.RebootIfRequired,
 			})
 		case "compliance_scan":
 			// Validate profile ID to prevent command injection
@@ -2079,6 +2113,28 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 			}
 			logger.WithField("patch_run_id", logutil.Sanitize(payload.PatchRunID)).Info("patch_run_stop received")
 			dispatchWSMessage(out, wsMsg{kind: "patch_run_stop", patchRunID: payload.PatchRunID})
+		case "reboot_host":
+			// delay_minutes is clamped agent-side in ExecuteReboot; we accept
+			// any non-negative integer here. Reason is free-form but trimmed
+			// to a reasonable length so a malicious server message cannot
+			// inject a multi-MB string into wall(1).
+			delay := payload.RebootDelayMinutes
+			if delay < 0 {
+				delay = 0
+			}
+			reason := payload.RebootReason
+			if len(reason) > 200 {
+				reason = reason[:200]
+			}
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+				"delay_minutes": delay,
+				"reason":        reason,
+			})).Info("reboot_host received")
+			dispatchWSMessage(out, wsMsg{
+				kind:               "reboot_host",
+				rebootDelayMinutes: delay,
+				rebootReason:       reason,
+			})
 		case "upgrade_ssg":
 			logger.WithField("version", payload.Version).Info("upgrade_ssg received from WebSocket")
 			dispatchWSMessage(out, wsMsg{kind: "upgrade_ssg", version: payload.Version})
@@ -2646,7 +2702,7 @@ func patchTypeRefusal(pkgManager, patchType string, dryRun bool) string {
 // runPatch runs package manager update and upgrade (patch_all) or install (patch_package).
 // Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), pkg (FreeBSD), pacman (Arch),
 // apk (Alpine) and zypper (openSUSE, SLES). When dryRun is true, simulates and sends dry_run_completed instead of completed.
-func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) error {
+func runPatch(patchRunID, patchType string, packageNames []string, dryRun, rebootIfRequired bool, verified ...verifiedTarget) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
@@ -2661,6 +2717,17 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	})
 	pkgManager := packageMgr.DetectPackageManager()
 	aptDisableRetries := cfgManager.GetAptDisableRetries()
+	if patchType == verifiedPatchType {
+		if pkgManager != "apt" || rebootIfRequired || verifyTargetSyntax(verified) != nil {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "Verified patching requires valid APT targets and no reboot")
+			return errors.New("invalid verified patch configuration")
+		}
+		if !verifiedPatchLock.TryLock() {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "Another verified patch is active")
+			return errors.New("another verified patch is active")
+		}
+		defer verifiedPatchLock.Unlock()
+	}
 
 	if !slices.Contains([]string{"apt", "dnf", "yum", "pkg", "pacman", "apk", "zypper"}, pkgManager) {
 		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman, apk, zypper required)", pkgManager)
@@ -2742,6 +2809,9 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		env = os.Environ()
 	}
 	env = append(env, "LC_MESSAGES=C")
+	if patchType == verifiedPatchType {
+		env = append(env, "LC_ALL=C")
+	}
 
 	if err := httpClient.SendPatchOutput(ctx, patchRunID, "started", "", ""); err != nil {
 		logger.WithError(err).Warn("Failed to send patch started to server")
@@ -2822,7 +2892,35 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		}
 	}
 
-	if stepErr == nil && !ownRunner {
+	if stepErr == nil && patchType == verifiedPatchType {
+		var args []string
+		args, stepErr = verifiedAPTArguments(ctx, verified, aptDisableRetries)
+		if stepErr == nil {
+			if err, abort := runStep(false, "verified apt simulation", "verified apt simulation failed: %w", "apt-get", append([]string{"-s"}, args...)...); abort {
+				stepErr = err
+			} else {
+				stepErr = verifyAPTTransaction(lastStepOutput, verified)
+			}
+		}
+		if stepErr == nil && dryRun {
+			sink.WriteString("\n" + verifiedPlanMarker + verifiedDigest(verified) + "\n")
+		}
+		if stepErr == nil && !dryRun {
+			var hook string
+			var cleanup func()
+			hook, cleanup, stepErr = makeVerifiedAPTHook(verified)
+			if stepErr == nil {
+				defer cleanup()
+				args = append([]string{"-o", "DPkg::Pre-Install-Pkgs::=" + hook}, args...)
+				if err, abort := runStep(false, "verified apt install", "verified apt install failed: %w", "apt-get", args...); abort {
+					stepErr = err
+				} else {
+					stepErr = verifyInstalledTargets(ctx, verified)
+				}
+			}
+		}
+	}
+	if stepErr == nil && !ownRunner && patchType != verifiedPatchType {
 		if patchType == "patch_all" {
 			switch pkgManager {
 			case "apt":
@@ -2991,6 +3089,25 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 
 	if wasStopped {
 		return errPatchRunStopped
+	}
+
+	// Policy-driven post-patch reboot (Linux/BSD; the Windows path returned
+	// earlier). Only after a fully successful, non-dry, non-stopped run, and
+	// only if the host still reports a pending reboot — patching that didn't
+	// touch the kernel/libc leaves the box up. Ordered after the post-patch
+	// report so the refreshed inventory reaches the server before the
+	// connection drops. 1-minute delay gives logged-in users the wall notice
+	// and lets the final WS/HTTP exchanges drain.
+	if rebootIfRequired && !dryRun {
+		detector := system.New(logger)
+		if needs, reason := detector.CheckRebootRequired(); needs {
+			logger.WithField("reason", reason).Info("Post-patch reboot required by policy; scheduling reboot")
+			if err := detector.ExecuteReboot(1, "PatchMon post-patch reboot (policy)"); err != nil {
+				logger.WithError(err).Warn("Post-patch reboot scheduling failed")
+			}
+		} else {
+			logger.Info("Post-patch reboot requested by policy but host does not need one; skipping")
+		}
 	}
 	return nil
 }
