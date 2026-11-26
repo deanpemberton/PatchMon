@@ -28,6 +28,13 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 		form.mode === "automatic" &&
 		form.max_concurrent === 1 &&
 		(form.canary_host_ids || []).length === 1;
+	const backupMode =
+		configuration.priority_only && form.mode === "automatic" && acceptBackupOnly;
+	const backupDefault = form.backup_evidence_default || "require";
+	const backupOverrides = form.backup_evidence_overrides || {};
+	const backupHosts = hosts.filter((host) =>
+		(configuration.policy.backup_only_host_ids || []).includes(host.id),
+	);
 	const mutation = useMutation({
 		mutationFn: (confirmed) =>
 			api.put(`/patching/policies/${configuration.policy_id}/remediation`, {
@@ -36,6 +43,8 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 					...form,
 					recovery_waiver_until: undefined,
 					backup_only_host_ids: undefined,
+					backup_evidence_default: backupMode ? backupDefault : undefined,
+					backup_evidence_overrides: backupMode ? backupOverrides : undefined,
 				},
 				confirm_automatic: confirmed,
 				confirm_recovery_waiver: canWaiveRecovery && waiveRecovery,
@@ -55,7 +64,9 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 			confirmed = await confirm({
 				title: "Authorize automatic remediation",
 				message:
-					canWaiveRecovery && waiveRecovery
+					backupMode
+						? `Authorize version-pinned automatic upgrades. Default backup evidence: ${backupDefault}; ${Object.keys(backupOverrides).length} host-specific overrides. Hosts configured to ignore backup evidence may have no usable recovery copy. Signed inventory, exact APT validation, scope and no automatic reboot remain enforced.`
+						: canWaiveRecovery && waiveRecovery
 						? "Authorize a single directly assigned canary for one hour without a tested restore. A complete recent backup, health checks, signed evidence and version-pinned validation remain mandatory. Recovery may fail. No automatic reboot."
 						: acceptBackupOnly
 							? "Accept the risk of an untested restore for the currently assigned, non-excluded hosts. Each upgrade still requires a current complete backup, signed fix evidence, health checks, exact validation and canary gates. New hosts do not inherit this exception. No automatic reboot."
@@ -77,7 +88,7 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 		<form onSubmit={save} className="space-y-3">
 			<p className="text-sm text-secondary-600 dark:text-secondary-300">
 				{configuration.priority_only
-					? "Priority-only: CVE severity sets urgency. Available APT updates are version-pinned and validated; no application-health or canary gate and no claim that installation fixes a CVE. A current complete backup and authorized scope are required."
+					? "Priority-only: CVE severity sets urgency. Available APT updates are version-pinned and validated; no application-health or canary gate and no claim that installation fixes a CVE. Backup evidence follows the configured default and individual host overrides; authorized scope is always required."
 					: "Requires an immediate policy, signed fix evidence, a complete backup, verified recovery or explicit acceptance, health checks and a compatible APT agent."}
 			</p>
 			<label htmlFor={`${prefix}-mode`} className="block text-sm font-medium">
@@ -176,9 +187,38 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 							if (event.target.checked) setWaiveRecovery(false);
 						}}
 					/>
-					Accept current complete backups without tested restores for this
-					policy's currently assigned, non-excluded hosts. Recovery may fail.
+					{configuration.priority_only
+						? "Authorize the current non-excluded host scope and backup evidence policy. Recovery may fail."
+						: "Accept current complete backups without tested restores for this policy’s currently assigned, non-excluded hosts. Recovery may fail."}
 				</label>
+			)}
+			{backupMode && (
+				<fieldset className="space-y-2 rounded border border-secondary-300 dark:border-secondary-600 p-3">
+					<legend className="text-sm font-medium">Backup evidence requirement</legend>
+					<label htmlFor={`${prefix}-backup-default`} className="block text-sm">Policy default</label>
+					<select id={`${prefix}-backup-default`} className="w-full rounded border bg-white dark:bg-secondary-700 px-3 py-2 text-sm" value={backupDefault} disabled={!canEdit} onChange={(event) => change("backup_evidence_default", event.target.value)}>
+						<option value="require">Require current complete backup</option>
+						<option value="ignore">Ignore backup evidence</option>
+					</select>
+					<p className="text-xs text-amber-700 dark:text-amber-300">Ignoring backup evidence does not create or verify a backup. Recovery may fail.</p>
+					<div className="max-h-64 overflow-auto space-y-2">
+						{backupHosts.map((host) => (
+							<label key={host.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+								<span>{host.friendly_name || host.hostname || host.id}</span>
+								<select className="rounded border bg-white dark:bg-secondary-700 px-2 py-1 text-sm" disabled={!canEdit} value={backupOverrides[host.id] || "inherit"} onChange={(event) => {
+									const next = { ...backupOverrides };
+									if (event.target.value === "inherit") delete next[host.id];
+									else next[host.id] = event.target.value;
+									change("backup_evidence_overrides", next);
+								}}>
+									<option value="inherit">Inherit default</option>
+									<option value="require">Require backup</option>
+									<option value="ignore">Ignore backup</option>
+								</select>
+							</label>
+						))}
+					</div>
+				</fieldset>
 			)}
 			{canWaiveRecovery && !acceptBackupOnly && (
 				<label className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300">

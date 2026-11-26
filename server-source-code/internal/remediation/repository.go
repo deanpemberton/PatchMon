@@ -53,12 +53,29 @@ func applyPriorityOnly(c *Configuration) {
 	p.PriorityOnly = c.PolicyID != "" && os.Getenv("PATCHMON_PRIORITY_ONLY_POLICY_ID") == c.PolicyID &&
 		p.Mode == ModeAutomatic && p.RecoveryWaiverUntil == nil && len(p.BackupOnlyHostIDs) > 0
 	c.PriorityOnly = p.PriorityOnly
+	// Only the locally opted-in policy may inherit this explicit deployment
+	// default. A saved policy choice always wins; all other policies stay strict.
+	if p.PriorityOnly && p.BackupEvidenceDefault == "" {
+		p.BackupEvidenceDefault = BackupRequire
+		if os.Getenv("PATCHMON_PRIORITY_BACKUP_DEFAULT") == BackupIgnore {
+			p.BackupEvidenceDefault = BackupIgnore
+		}
+	}
+}
+
+// PolicyForConfiguration derives runtime authorization from the local server,
+// never from a client-supplied priority flag.
+func PolicyForConfiguration(id string, p Policy) Policy {
+	c := Configuration{PolicyID: id, Policy: p}
+	applyPriorityOnly(&c)
+	return c.Policy
 }
 
 func WriteConfiguration(ctx context.Context, d *database.DB, id, actor string, expected int64, p Policy) error {
 	if actor == "" {
 		return errors.New("authenticated policy editor required")
 	}
+	p = PolicyForConfiguration(id, p)
 	if err := p.Validate(); err != nil {
 		return err
 	}

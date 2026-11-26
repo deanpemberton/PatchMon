@@ -171,9 +171,13 @@ func (h HostEvidence) Safe(now time.Time, p Policy) bool {
 		// A new member does not inherit the recovery exception automatically.
 		recoveryOK = p.Validate() == nil && (h.RecoveryVerified || slices.Contains(p.BackupOnlyHostIDs, h.HostID))
 	}
-	return Fresh(h.ObservedAt, now, MaxEvidenceAge) && h.IdentityFingerprint != "" && h.PackagesHash != "" &&
-		h.BackupComplete && recoveryOK && (p.PriorityOnly || h.ApplicationHealthy) &&
-		Fresh(h.BackupAt, now, time.Duration(p.BackupMaxAgeHours)*time.Hour)
+	if !Fresh(h.ObservedAt, now, MaxEvidenceAge) || h.IdentityFingerprint == "" || h.PackagesHash == "" || (!p.PriorityOnly && !h.ApplicationHealthy) {
+		return false
+	}
+	if !p.RequiresBackupEvidence(h.HostID) {
+		return true
+	}
+	return h.BackupComplete && recoveryOK && Fresh(h.BackupAt, now, time.Duration(p.BackupMaxAgeHours)*time.Hour)
 }
 
 func (h HostEvidence) Digest() string {

@@ -92,3 +92,80 @@ func TestExpandedPriorityBatchCompatibleAgent(t *testing.T) {
 		}
 	}
 }
+
+func TestPriorityBackupEvidenceHostOverrides(t *testing.T) {
+	now := time.Date(2026, 11, 26, 3, 0, 0, 0, time.UTC)
+	t.Setenv("PATCHMON_PRIORITY_ONLY_POLICY_ID", "policy")
+	t.Setenv("PATCHMON_PRIORITY_BACKUP_DEFAULT", BackupIgnore)
+	p := DefaultPolicy()
+	p.Mode = ModeAutomatic
+	p.BackupOnlyHostIDs = []string{"ordinary", "protected"}
+	p.BackupEvidenceOverrides = map[string]string{"protected": BackupRequire}
+	p = PolicyForConfiguration("policy", p)
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	h := HostEvidence{HostID: "ordinary", IdentityFingerprint: "identity", PackagesHash: "hash", ObservedAt: now}
+	if !h.Safe(now, p) || h.BackupComplete || h.RecoveryVerified {
+		t.Fatal("explicit default ignore must not fabricate recovery evidence")
+	}
+	h.HostID = "protected"
+	if h.Safe(now, p) {
+		t.Fatal("host-specific requirement bypassed")
+	}
+	h.BackupComplete = true
+	h.BackupAt = now.Add(-time.Hour)
+	if !h.Safe(now, p) {
+		t.Fatal("fresh backup for protected host rejected")
+	}
+	h.BackupAt = now.Add(-100 * time.Hour)
+	if h.Safe(now, p) {
+		t.Fatal("stale backup accepted for protected host")
+	}
+	h.HostID = "ordinary"
+	h.ObservedAt = now.Add(-time.Hour)
+	if h.Safe(now, p) {
+		t.Fatal("stale package evidence bypassed")
+	}
+	h.ObservedAt = now
+	h.PackagesHash = ""
+	if h.Safe(now, p) {
+		t.Fatal("missing package identity bypassed")
+	}
+	h.PackagesHash = "hash"
+	h.HostID = "unconfirmed"
+	h.BackupComplete = false
+	if h.Safe(now, p) {
+		t.Fatal("unconfirmed host inherited exception")
+	}
+	p.BackupEvidenceDefault = BackupRequire
+	p.BackupEvidenceOverrides = map[string]string{"ordinary": BackupIgnore}
+	h.HostID = "ordinary"
+	if !h.Safe(now, p) {
+		t.Fatal("host-specific ignore override rejected")
+	}
+	h.HostID = "protected"
+	if h.Safe(now, p) {
+		t.Fatal("default requirement bypassed")
+	}
+	p.BackupEvidenceOverrides["unconfirmed"] = BackupIgnore
+	if p.Validate() == nil {
+		t.Fatal("out-of-scope override accepted")
+	}
+	delete(p.BackupEvidenceOverrides, "unconfirmed")
+	p.BackupEvidenceOverrides["ordinary"] = "unknown"
+	if p.Validate() == nil {
+		t.Fatal("invalid override mode accepted")
+	}
+	p.BackupEvidenceOverrides = nil
+	p.BackupEvidenceDefault = BackupIgnore
+	if PolicyForConfiguration("other", p).Validate() == nil {
+		t.Fatal("non-opted-in policy accepted ignore setting")
+	}
+	p.BackupEvidenceDefault = ""
+	p = PolicyForConfiguration("policy", p)
+	p.BackupEvidenceDefault = BackupRequire
+	if PolicyForConfiguration("policy", p).BackupEvidenceDefault != BackupRequire {
+		t.Fatal("saved required default overridden by deployment")
+	}
+}

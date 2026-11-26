@@ -93,6 +93,7 @@ func (h *PatchingHandler) PutRemediationPolicy(w http.ResponseWriter, r *http.Re
 		until := time.Now().UTC().Add(remediation.RecoveryWaiverDuration)
 		body.Policy.RecoveryWaiverUntil = &until
 	}
+	body.Policy = remediation.PolicyForConfiguration(id, body.Policy)
 	if err := body.Policy.Validate(); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

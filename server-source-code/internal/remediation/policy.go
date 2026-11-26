@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"time"
 )
@@ -23,6 +24,8 @@ const (
 	SeverityHigh      = "high"
 	SeverityCritical  = "critical"
 	SeverityExploited = "exploited"
+	BackupRequire     = "require"
+	BackupIgnore      = "ignore"
 )
 
 var (
@@ -44,6 +47,9 @@ type Policy struct {
 	CanaryHostIDs       []string   `json:"canary_host_ids"`
 	RecoveryWaiverUntil *time.Time `json:"recovery_waiver_until,omitempty"`
 	BackupOnlyHostIDs   []string   `json:"backup_only_host_ids,omitempty"`
+
+	BackupEvidenceDefault   string            `json:"backup_evidence_default,omitempty"`
+	BackupEvidenceOverrides map[string]string `json:"backup_evidence_overrides,omitempty"`
 }
 
 func DefaultPolicy() Policy {
@@ -89,7 +95,29 @@ func (p Policy) Validate() error {
 			seen[id] = true
 		}
 	}
+	if p.BackupEvidenceDefault != "" || len(p.BackupEvidenceOverrides) > 0 {
+		if !p.PriorityOnly || (p.BackupEvidenceDefault != "" && p.BackupEvidenceDefault != BackupRequire && p.BackupEvidenceDefault != BackupIgnore) || len(p.BackupEvidenceOverrides) > len(p.BackupOnlyHostIDs) {
+			return errors.New("backup evidence overrides require the explicitly scoped priority-only policy")
+		}
+		for id, mode := range p.BackupEvidenceOverrides {
+			if !slices.Contains(p.BackupOnlyHostIDs, id) || (mode != BackupRequire && mode != BackupIgnore) {
+				return errors.New("invalid backup evidence host override")
+			}
+		}
+	}
 	return nil
+}
+
+// RequiresBackupEvidence fails closed outside the explicitly confirmed host scope.
+// Missing settings retain the original backup requirement.
+func (p Policy) RequiresBackupEvidence(hostID string) bool {
+	if !p.PriorityOnly || !slices.Contains(p.BackupOnlyHostIDs, hostID) || p.Validate() != nil {
+		return true
+	}
+	if mode, ok := p.BackupEvidenceOverrides[hostID]; ok {
+		return mode != BackupIgnore
+	}
+	return p.BackupEvidenceDefault != BackupIgnore
 }
 
 // A waived recovery rehearsal is an explicit, short-lived policy risk decision.
