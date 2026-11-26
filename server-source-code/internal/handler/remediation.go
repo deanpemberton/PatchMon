@@ -60,6 +60,7 @@ func (h *PatchingHandler) PutRemediationPolicy(w http.ResponseWriter, r *http.Re
 		Policy                remediation.Policy `json:"policy"`
 		ConfirmAutomatic      bool               `json:"confirm_automatic"`
 		ConfirmRecoveryWaiver bool               `json:"confirm_recovery_waiver"`
+		ConfirmBackupOnly     bool               `json:"confirm_backup_only"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 32768)
 	decoder := json.NewDecoder(r.Body)
@@ -71,6 +72,19 @@ func (h *PatchingHandler) PutRemediationPolicy(w http.ResponseWriter, r *http.Re
 	// Do not trust an expiry supplied by the caller. Only a new explicit
 	// browser authorization creates a server-timed, one-hour window.
 	body.Policy.RecoveryWaiverUntil = nil
+	body.Policy.BackupOnlyHostIDs = nil
+	if body.ConfirmBackupOnly {
+		if body.ConfirmRecoveryWaiver || body.Policy.Mode != remediation.ModeAutomatic || !body.ConfirmAutomatic || !remediation.ExecutionEnabled() {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "Backup-only risk acceptance requires explicit automatic confirmation and server opt-in; it cannot be combined with a timed waiver"})
+			return
+		}
+		ids, err := remediation.BackupOnlyScope(r.Context(), d, id)
+		if err != nil {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "Unable to capture a bounded effective policy scope"})
+			return
+		}
+		body.Policy.BackupOnlyHostIDs = ids
+	}
 	if body.ConfirmRecoveryWaiver {
 		if body.Policy.Mode != remediation.ModeAutomatic || !body.ConfirmAutomatic || !remediation.ExecutionEnabled() {
 			JSON(w, http.StatusBadRequest, map[string]string{"error": "Recovery waiver requires explicit automatic execution confirmation"})
@@ -107,7 +121,7 @@ func (h *PatchingHandler) PutRemediationPolicy(w http.ResponseWriter, r *http.Re
 			JSON(w, http.StatusNotFound, map[string]string{"error": "Policy not found"})
 			return
 		}
-		if errors.Is(err, remediation.ErrImmediateRequired) || errors.Is(err, remediation.ErrRecoveryWaiverScope) {
+		if errors.Is(err, remediation.ErrImmediateRequired) || errors.Is(err, remediation.ErrRecoveryWaiverScope) || errors.Is(err, remediation.ErrBackupOnlyScope) {
 			JSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}

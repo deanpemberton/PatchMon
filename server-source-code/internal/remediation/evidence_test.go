@@ -84,3 +84,45 @@ func TestRecoveryWaiverIsSingleHostAndTimeLimited(t *testing.T) {
 		t.Fatal("waiver allowed missing canary")
 	}
 }
+
+func TestBackupOnlyAcceptanceIsBoundedAndKeepsBackupHealthGates(t *testing.T) {
+	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	p := DefaultPolicy()
+	p.Mode = ModeAutomatic
+	p.CanaryHostIDs = []string{"example-canary"}
+	p.BackupOnlyHostIDs = []string{"example-canary", "example-host"}
+	h := HostEvidence{HostID: "example-host", IdentityFingerprint: "fixture", PackagesHash: "fixture", ObservedAt: now, BackupAt: now.Add(-time.Hour), BackupComplete: true, ApplicationHealthy: true}
+	if p.Validate() != nil || !h.Safe(now, p) {
+		t.Fatal("authorized backup-only host rejected")
+	}
+	for _, bad := range []HostEvidence{
+		{HostID: h.HostID, IdentityFingerprint: h.IdentityFingerprint, PackagesHash: h.PackagesHash, ObservedAt: now, BackupAt: h.BackupAt, ApplicationHealthy: true},
+		{HostID: h.HostID, IdentityFingerprint: h.IdentityFingerprint, PackagesHash: h.PackagesHash, ObservedAt: now, BackupAt: h.BackupAt, BackupComplete: true},
+		{HostID: h.HostID, IdentityFingerprint: h.IdentityFingerprint, PackagesHash: h.PackagesHash, ObservedAt: now, BackupAt: now.Add(-48 * time.Hour), BackupComplete: true, ApplicationHealthy: true},
+		{HostID: h.HostID, IdentityFingerprint: h.IdentityFingerprint, PackagesHash: h.PackagesHash, ObservedAt: now.Add(-time.Hour), BackupAt: h.BackupAt, BackupComplete: true, ApplicationHealthy: true},
+	} {
+		if bad.Safe(now, p) {
+			t.Fatal("backup-only acceptance bypassed an independent gate")
+		}
+	}
+	h.HostID = "new-member"
+	if h.Safe(now, p) {
+		t.Fatal("new member inherited an untested recovery exception")
+	}
+	h.HostID = "example-host"
+	p.Mode = ModeShadow
+	if p.Validate() == nil || h.Safe(now, p) {
+		t.Fatal("nonautomatic mode accepted backup-only exception")
+	}
+	p.Mode = ModeAutomatic
+	p.BackupOnlyHostIDs = []string{"example-host", "example-host"}
+	if p.Validate() == nil || h.Safe(now, p) {
+		t.Fatal("duplicate authorized host accepted")
+	}
+	p.BackupOnlyHostIDs = []string{"example-host"}
+	until := now.Add(time.Hour)
+	p.RecoveryWaiverUntil = &until
+	if p.Validate() == nil {
+		t.Fatal("combined permanent and timed recovery exceptions accepted")
+	}
+}

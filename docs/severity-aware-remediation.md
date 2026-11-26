@@ -46,6 +46,16 @@ manual review. A policy can be paused or revised in the browser; this invalidate
 queued plans at dispatch. Already-running transactions are not rolled back by
 changing a policy.
 
+A separate **backup-only risk acceptance** option permits an authenticated
+administrator to accept the absence of a tested restore for the currently
+effective, non-excluded hosts when explicitly authorizing Automatic mode.
+The server captures that host list and stores it with the policy revision and
+editor identity; caller-supplied host lists are ignored. A newly assigned host
+must have a verified restore or be included in a new explicit confirmation.
+This option never changes `recovery_verified` evidence, and it does not
+relax current completed-backup, health, signed fix, identity, exact validation,
+concurrency, scope, or canary gates. It cannot be combined with a timed waiver.
+
 Automatic rollout requires a completed canary on the exact package/version
 cohort under the same policy revision, verified post-patch inventory and fresh
 independent application-health evidence. A different cohort requires its own

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"time"
 )
 
@@ -165,6 +166,10 @@ func (h HostEvidence) Safe(now time.Time, p Policy) bool {
 	recoveryOK := h.RecoveryVerified
 	if p.RecoveryWaiverUntil != nil {
 		recoveryOK = p.recoveryWaiverActive(h.HostID, now)
+	} else if len(p.BackupOnlyHostIDs) > 0 {
+		// Risk acceptance applies only to the authenticated scope captured at save.
+		// A new member does not inherit the recovery exception automatically.
+		recoveryOK = p.Validate() == nil && (h.RecoveryVerified || slices.Contains(p.BackupOnlyHostIDs, h.HostID))
 	}
 	return Fresh(h.ObservedAt, now, MaxEvidenceAge) && h.IdentityFingerprint != "" && h.PackagesHash != "" &&
 		h.BackupComplete && recoveryOK && h.ApplicationHealthy &&

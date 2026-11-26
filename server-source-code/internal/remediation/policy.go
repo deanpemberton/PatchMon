@@ -40,6 +40,7 @@ type Policy struct {
 	BackupMaxAgeHours   int        `json:"backup_max_age_hours"`
 	CanaryHostIDs       []string   `json:"canary_host_ids"`
 	RecoveryWaiverUntil *time.Time `json:"recovery_waiver_until,omitempty"`
+	BackupOnlyHostIDs   []string   `json:"backup_only_host_ids,omitempty"`
 }
 
 func DefaultPolicy() Policy {
@@ -69,6 +70,18 @@ func (p Policy) Validate() error {
 	}
 	if p.RecoveryWaiverUntil != nil && (p.Mode != ModeAutomatic || p.MaxConcurrent != 1 || len(p.CanaryHostIDs) != 1 || p.RecoveryWaiverUntil.IsZero()) {
 		return errors.New("a recovery waiver requires a single automatic canary with concurrency one")
+	}
+	if len(p.BackupOnlyHostIDs) > 0 {
+		if p.Mode != ModeAutomatic || p.RecoveryWaiverUntil != nil || len(p.BackupOnlyHostIDs) > 512 {
+			return errors.New("backup-only risk acceptance requires automatic mode and a bounded authorized host scope")
+		}
+		seen := map[string]bool{}
+		for _, id := range p.BackupOnlyHostIDs {
+			if id == "" || len(id) > 128 || seen[id] {
+				return errors.New("invalid backup-only authorized host ID")
+			}
+			seen[id] = true
+		}
 	}
 	return nil
 }

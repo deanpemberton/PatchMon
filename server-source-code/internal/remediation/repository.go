@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -77,6 +78,15 @@ func WriteConfiguration(ctx context.Context, d *database.DB, id, actor string, e
 			return ErrRecoveryWaiverScope
 		}
 	}
+	if len(p.BackupOnlyHostIDs) > 0 {
+		current, scopeErr := effectiveScopeIDs(ctx, tx, id)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		if !slices.Equal(current, p.BackupOnlyHostIDs) {
+			return ErrBackupOnlyScope
+		}
+	}
 	var revision int64
 	err = tx.QueryRow(ctx, "SELECT revision FROM patch_remediation_policies WHERE policy_id=$1", id).Scan(&revision)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -101,6 +111,51 @@ func WriteConfiguration(ctx context.Context, d *database.DB, id, actor string, e
 var ErrImmediateRequired = errors.New("severity remediation requires an immediate native policy")
 var ErrRevision = errors.New("policy changed; reload before saving")
 var ErrRecoveryWaiverScope = errors.New("recovery waiver requires exactly one directly assigned canary and a current one-hour window")
+
+var ErrBackupOnlyScope = errors.New("backup-only authorization scope changed; reload and explicitly confirm the current scope")
+
+// Capture the effective assignment, including direct-assignment precedence and
+// exclusions, exactly as ResolvePolicy does. No credentials or inventory are exported.
+func effectiveScopeIDs(ctx context.Context, tx pgx.Tx, id string) ([]string, error) {
+	rows, err := tx.Query(ctx, `SELECT h.id FROM hosts h
+	CROSS JOIN LATERAL (
+		SELECT a.patch_policy_id FROM patch_policy_assignments a
+		WHERE (a.target_type='host' AND a.target_id=h.id) OR
+		(a.target_type='host_group' AND EXISTS(SELECT 1 FROM host_group_memberships m WHERE m.host_id=h.id AND m.host_group_id=a.target_id))
+		ORDER BY CASE WHEN a.target_type='host' THEN 0 ELSE 1 END,a.created_at,a.id LIMIT 1
+	) effective
+	WHERE effective.patch_policy_id=$1
+	AND NOT EXISTS(SELECT 1 FROM patch_policy_exclusions e WHERE e.host_id=h.id AND e.patch_policy_id=$1)
+	ORDER BY h.id LIMIT 513`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var hostID string
+		if err = rows.Scan(&hostID); err != nil {
+			return nil, err
+		}
+		ids = append(ids, hostID)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 || len(ids) > 512 {
+		return nil, ErrBackupOnlyScope
+	}
+	return ids, nil
+}
+
+func BackupOnlyScope(ctx context.Context, d *database.DB, id string) ([]string, error) {
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	return effectiveScopeIDs(ctx, tx, id)
+}
 
 func ListConfigurations(ctx context.Context, d *database.DB) ([]Configuration, error) {
 	tx, err := d.Begin(ctx)

@@ -119,6 +119,25 @@ func TestMigrationAndRemediationRepository(t *testing.T) {
 	if err = CheckHost(ctx, d, h, s.Packages, now, c.Policy); err == nil {
 		t.Fatal("changed candidate passed safety gate")
 	}
+	backupOnly := DefaultPolicy()
+	backupOnly.Mode = ModeAutomatic
+	backupOnly.CanaryHostIDs = []string{"fixture-host"}
+	backupOnly.BackupOnlyHostIDs, err = BackupOnlyScope(ctx, d, c.PolicyID)
+	if err != nil || len(backupOnly.BackupOnlyHostIDs) != 1 || backupOnly.BackupOnlyHostIDs[0] != h.HostID {
+		t.Fatalf("unexpected backup-only scope: %v %+v", err, backupOnly.BackupOnlyHostIDs)
+	}
+	backupOnly.BackupOnlyHostIDs = append(backupOnly.BackupOnlyHostIDs, "unauthorized-host")
+	if err = WriteConfiguration(ctx, d, c.PolicyID, "fixture-owner", c.Revision, backupOnly); !errors.Is(err, ErrBackupOnlyScope) {
+		t.Fatalf("scope mismatch accepted: %v", err)
+	}
+	backupOnly.BackupOnlyHostIDs = backupOnly.BackupOnlyHostIDs[:1]
+	if err = WriteConfiguration(ctx, d, c.PolicyID, "fixture-owner", c.Revision, backupOnly); err != nil {
+		t.Fatalf("exact scope acceptance rejected: %v", err)
+	}
+	c, err = ReadConfiguration(ctx, d, c.PolicyID)
+	if err != nil || len(c.Policy.BackupOnlyHostIDs) != 1 {
+		t.Fatalf("backup-only policy not persisted: %v", err)
+	}
 	waiver := DefaultPolicy()
 	waiver.Mode = ModeAutomatic
 	waiver.MaxConcurrent = 1

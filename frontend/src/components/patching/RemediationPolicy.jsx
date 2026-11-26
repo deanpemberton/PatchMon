@@ -20,6 +20,9 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 	const prefix = useId();
 	const [form, setForm] = useState(configuration.policy);
 	const [waiveRecovery, setWaiveRecovery] = useState(false);
+	const [acceptBackupOnly, setAcceptBackupOnly] = useState(
+		(configuration.policy.backup_only_host_ids || []).length > 0,
+	);
 	const canWaiveRecovery =
 		form.mode === "automatic" &&
 		form.max_concurrent === 1 &&
@@ -28,9 +31,14 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 		mutationFn: (confirmed) =>
 			api.put(`/patching/policies/${configuration.policy_id}/remediation`, {
 				revision: configuration.revision,
-				policy: { ...form, recovery_waiver_until: undefined },
+				policy: {
+					...form,
+					recovery_waiver_until: undefined,
+					backup_only_host_ids: undefined,
+				},
 				confirm_automatic: confirmed,
 				confirm_recovery_waiver: canWaiveRecovery && waiveRecovery,
+				confirm_backup_only: form.mode === "automatic" && acceptBackupOnly,
 			}),
 		onSuccess: () => {
 			toast.success("Remediation policy saved");
@@ -48,7 +56,9 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 				message:
 					canWaiveRecovery && waiveRecovery
 						? "Authorize a single directly assigned canary for one hour without a tested restore. A complete recent backup, health checks, signed evidence and version-pinned validation remain mandatory. Recovery may fail. No automatic reboot."
-						: "This policy authorizes unattended, version-pinned package upgrades for its effective host scope. Backups, validation and canaries are required. No automatic reboot is permitted.",
+						: acceptBackupOnly
+							? "Accept the risk of an untested restore for the currently assigned, non-excluded hosts. Each upgrade still requires a current complete backup, signed fix evidence, health checks, exact validation and canary gates. New hosts do not inherit this exception. No automatic reboot."
+							: "This policy authorizes unattended, version-pinned package upgrades for its effective host scope. Backups, validation and canaries are required. No automatic reboot is permitted.",
 				confirmLabel: "Authorize automatic remediation",
 			});
 			if (!confirmed) return;
@@ -65,9 +75,10 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 	return (
 		<form onSubmit={save} className="space-y-3">
 			<p className="text-sm text-secondary-600 dark:text-secondary-300">
-				Requires an immediate patch policy, signed advisory evidence, tested
-				recovery, and a compatible APT agent. Unknown severity is never treated
-				as low.
+				Requires an immediate patch policy, signed advisory evidence, a complete
+				current backup, and a compatible APT agent. Tested recovery is required
+				unless explicitly accepted as a policy risk. Unknown severity is never
+				treated as low.
 			</p>
 			<label htmlFor={prefix + "-mode"} className="block text-sm font-medium">
 				Execution mode
@@ -150,7 +161,22 @@ function PolicyEditor({ configuration, executionEnabled, hosts, refresh }) {
 					. Execution is blocked after expiry.
 				</p>
 			)}
-			{canWaiveRecovery && (
+			{form.mode === "automatic" && (
+				<label className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
+					<input
+						type="checkbox"
+						disabled={!canEdit}
+						checked={acceptBackupOnly}
+						onChange={(event) => {
+							setAcceptBackupOnly(event.target.checked);
+							if (event.target.checked) setWaiveRecovery(false);
+						}}
+					/>
+					Accept current complete backups without tested restores for this
+					policy's currently assigned, non-excluded hosts. Recovery may fail.
+				</label>
+			)}
+			{canWaiveRecovery && !acceptBackupOnly && (
 				<label className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
 					<input
 						type="checkbox"
