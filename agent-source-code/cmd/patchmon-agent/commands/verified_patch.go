@@ -36,15 +36,22 @@ type verifiedTarget struct {
 }
 
 func verifyTargetSyntax(targets []verifiedTarget) error {
-	if len(targets) == 0 || len(targets) > 64 {
-		return errors.New("verified patch requires 1 to 64 exact targets")
+	if len(targets) == 0 || len(targets) > 256 {
+		return errors.New("verified patch requires 1 to 256 exact targets")
 	}
 	seen := map[string]bool{}
+	names := make([]string, 0, len(targets))
 	for _, t := range targets {
 		if !verifiedNamePattern.MatchString(t.Name) || !verifiedVersionPattern.MatchString(t.Installed) || !verifiedVersionPattern.MatchString(t.Candidate) || t.Installed == t.Candidate || seen[t.Name] {
 			return errors.New("invalid or duplicate verified package target")
 		}
 		seen[t.Name] = true
+		names = append(names, t.Name)
+	}
+	packagesJSON, _ := json.Marshal(targets)
+	namesJSON, _ := json.Marshal(names)
+	if len(packagesJSON)+len(namesJSON) > 48*1024 {
+		return errors.New("verified transaction exceeds transport budget")
 	}
 	return nil
 }

@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -38,5 +40,25 @@ func TestVerifiedDigestStable(t *testing.T) {
 	b.Candidate = "3"
 	if verifiedDigest([]verifiedTarget{a, b}) == verifiedDigest([]verifiedTarget{a, {Name: "example-b", Installed: "1", Candidate: "2"}}) {
 		t.Fatal("digest ignores candidate")
+	}
+}
+
+func TestExpandedVerifiedAPTTransaction(t *testing.T) {
+	var targets []verifiedTarget
+	var lines strings.Builder
+	fmt.Fprintln(&lines, "113 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.")
+	for i := 0; i < 113; i++ {
+		name := fmt.Sprintf("example-%03d", i)
+		targets = append(targets, verifiedTarget{Name: name, Installed: "1", Candidate: "2"})
+		fmt.Fprintf(&lines, "Inst %s [1] (2 Example:stable [amd64])\n", name)
+	}
+	if err := verifyAPTTransaction(lines.String(), targets); err != nil {
+		t.Fatal(err)
+	}
+	if verifyAPTTransaction(lines.String(), targets[:64]) == nil {
+		t.Fatal("incomplete transaction accepted")
+	}
+	if verifyAPTTransaction(lines.String()+"Remv extra [1]\n", targets) == nil {
+		t.Fatal("removal accepted")
 	}
 }

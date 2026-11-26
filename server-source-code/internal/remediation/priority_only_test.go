@@ -1,6 +1,7 @@
 package remediation
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -65,5 +66,28 @@ func TestPriorityOnlyIsScopedAndDoesNotClaimFix(t *testing.T) {
 	}
 	if Evaluate(p, h.Targets[0], now, time.Time{}).Eligible {
 		t.Fatal("strict policy relaxed")
+	}
+}
+
+func TestExpandedPriorityBatchCompatibleAgent(t *testing.T) {
+	p := DefaultPolicy()
+	p.Mode = ModeAutomatic
+	p.PriorityOnly = true
+	c := Configuration{PolicyID: "policy", Revision: 2, Policy: p}
+	h := HostEvidence{HostID: "host", IdentityFingerprint: "identity"}
+	now := time.Now().UTC()
+	var ds []Decision
+	for i := 0; i < 113; i++ {
+		d := Evaluate(p, Target{Package: fmt.Sprintf("example-%03d", i), Installed: "1", Candidate: "2", FirstSeen: now}, now, time.Time{})
+		ds = append(ds, d)
+	}
+	for _, tc := range []struct {
+		agent string
+		limit int
+	}{{"2.1.9-rc.remediation.3", 64}, {expandedPriorityAgent, 113}, {"", 64}} {
+		s, err := MakeSnapshotForAgent(c, h, ds, tc.agent)
+		if err != nil || len(s.Packages) != tc.limit {
+			t.Fatalf("agent %q: want %d packages, got %d (%v)", tc.agent, tc.limit, len(s.Packages), err)
+		}
 	}
 }

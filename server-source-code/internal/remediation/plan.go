@@ -20,6 +20,11 @@ const VerifiedPatchType = "patch_package_verified"
 const ValidationMarker = "PATCHMON_VERIFIED_PLAN "
 const validationMaxAge = 30 * time.Minute
 
+const expandedPriorityAgent = "2.1.9-rc.remediation.7"
+const legacyTargetLimit = 64
+const expandedTargetLimit = 256
+const verifiedPayloadLimit = 48 * 1024
+
 // Snapshot is stored in native PatchMon run history, linking the validated
 // package/version set and policy revision to the eventual execution.
 type Snapshot struct {
@@ -47,6 +52,19 @@ func PackageDigest(pkgs []VerifiedPackage) string {
 }
 
 func MakeSnapshot(c Configuration, h HostEvidence, decisions []Decision) (Snapshot, error) {
+	return MakeSnapshotForAgent(c, h, decisions, "")
+}
+
+// Large batches are allowed only for a priority-only policy and the exact
+// compatible agent release. Older agents and strict policies retain 64.
+func MakeSnapshotForAgent(c Configuration, h HostEvidence, decisions []Decision, agentVersion string) (Snapshot, error) {
+	limit := legacyTargetLimit
+	if c.Policy.PriorityOnly && agentVersion == expandedPriorityAgent {
+		limit = expandedTargetLimit
+	}
+	// The native WebSocket has a 64 KiB read limit. Leave 16 KiB for the
+	// envelope, run identifier and future protocol overhead.
+	payloadBytes := 4
 	pkgs := map[string]VerifiedPackage{}
 	chosen := []Decision{}
 	routine := false
@@ -70,10 +88,14 @@ func MakeSnapshot(c Configuration, h HostEvidence, decisions []Decision) (Snapsh
 		if prior, ok := pkgs[p.Name]; ok && prior != p {
 			return Snapshot{}, errors.New("conflicting candidates")
 		}
-		if len(pkgs) >= 64 {
-			if _, ok := pkgs[p.Name]; !ok {
+		if _, exists := pkgs[p.Name]; !exists {
+			raw, _ := json.Marshal(p)
+			name, _ := json.Marshal(p.Name)
+			cost := len(raw) + len(name) + 2
+			if len(pkgs) >= limit || payloadBytes+cost > verifiedPayloadLimit {
 				continue
 			}
+			payloadBytes += cost
 		}
 		pkgs[p.Name] = p
 		chosen = append(chosen, d)
@@ -105,7 +127,7 @@ func (s Snapshot) digestFields() []any {
 }
 
 func (s Snapshot) Validate() error {
-	if !s.Managed || s.PolicyID == "" || s.HostID == "" || s.Identity == "" || s.Revision < 1 || len(s.Packages) == 0 || len(s.Packages) > 64 {
+	if !s.Managed || s.PolicyID == "" || s.HostID == "" || s.Identity == "" || s.Revision < 1 || len(s.Packages) == 0 || len(s.Packages) > expandedTargetLimit || (!s.PriorityOnly && len(s.Packages) > legacyTargetLimit) {
 		return errors.New("invalid remediation snapshot")
 	}
 	seen := map[string]bool{}
@@ -114,6 +136,11 @@ func (s Snapshot) Validate() error {
 			return errors.New("invalid or duplicate remediation package")
 		}
 		seen[p.Name] = true
+	}
+	packagesJSON, _ := json.Marshal(s.Packages)
+	namesJSON, _ := json.Marshal(s.Names())
+	if len(packagesJSON)+len(namesJSON) > verifiedPayloadLimit {
+		return errors.New("verified package payload exceeds transport budget")
 	}
 	if s.RolloutDigest != PackageDigest(s.Packages) {
 		return errors.New("invalid rollout digest")

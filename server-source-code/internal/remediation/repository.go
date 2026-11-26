@@ -369,15 +369,18 @@ func CheckHost(ctx context.Context, d *database.DB, h HostEvidence, pkgs []Verif
 		return err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	var status, manager, osType, osVersion, fingerprint, hash string
+	var status, manager, osType, osVersion, fingerprint, hash, agentVersion string
 	var lastUpdate, lastReport *time.Time
 	var conflict, reboot, waiting bool
-	err = tx.QueryRow(ctx, `SELECT status,COALESCE(package_manager,''),os_type,os_version,COALESCE(identity_fingerprint,''),COALESCE(packages_hash,''),last_update,last_full_report_at,identity_conflict_at IS NOT NULL,COALESCE(needs_reboot,false),awaiting_post_patch_report_run_id IS NOT NULL FROM hosts WHERE id=$1`, h.HostID).Scan(&status, &manager, &osType, &osVersion, &fingerprint, &hash, &lastUpdate, &lastReport, &conflict, &reboot, &waiting)
+	err = tx.QueryRow(ctx, `SELECT status,COALESCE(package_manager,''),os_type,os_version,COALESCE(identity_fingerprint,''),COALESCE(packages_hash,''),COALESCE(agent_version,''),last_update,last_full_report_at,identity_conflict_at IS NOT NULL,COALESCE(needs_reboot,false),awaiting_post_patch_report_run_id IS NOT NULL FROM hosts WHERE id=$1`, h.HostID).Scan(&status, &manager, &osType, &osVersion, &fingerprint, &hash, &agentVersion, &lastUpdate, &lastReport, &conflict, &reboot, &waiting)
 	if err != nil {
 		return err
 	}
 	if status != "active" || manager != "apt" || osType != h.OS || osVersion != h.OSVersion || fingerprint != h.IdentityFingerprint || hash != h.PackagesHash || conflict || (reboot && !p.PriorityOnly) || waiting || lastUpdate == nil || lastReport == nil || !Fresh(*lastUpdate, now, 90*time.Minute) || !Fresh(*lastReport, now, 24*time.Hour) {
 		return errors.New("host identity, package snapshot or health gate")
+	}
+	if len(pkgs) > legacyTargetLimit && (!p.PriorityOnly || agentVersion != expandedPriorityAgent) {
+		return errors.New("expanded transaction requires compatible agent")
 	}
 	for _, pkg := range pkgs {
 		if !pkg.Valid() {

@@ -131,7 +131,19 @@ func (h *AutoPatchDispatchHandler) evaluateRemediationHost(ctx context.Context, 
 		row.Blocker = "execution_not_enabled"
 		return nil
 	}
-	s, err := remediation.MakeSnapshot(c, ev, row.Decisions)
+	host, err := h.hosts.GetByID(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	if host == nil {
+		row.Blocker = "host_missing"
+		return nil
+	}
+	agentVersion := ""
+	if host.AgentVersion != nil {
+		agentVersion = *host.AgentVersion
+	}
+	s, err := remediation.MakeSnapshotForAgent(c, ev, row.Decisions, agentVersion)
 	if err != nil {
 		row.Blocker = "no_unambiguous_eligible_packages"
 		return nil
@@ -149,14 +161,6 @@ func (h *AutoPatchDispatchHandler) evaluateRemediationHost(ctx context.Context, 
 			row.Blocker = "awaiting_verified_canary"
 			return nil
 		}
-	}
-	host, err := h.hosts.GetByID(ctx, hostID)
-	if err != nil {
-		return err
-	}
-	if host == nil {
-		row.Blocker = "host_missing"
-		return nil
 	}
 	previous, err := remediation.LatestAttempt(ctx, h.db, s)
 	if err != nil {
