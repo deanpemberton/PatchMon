@@ -12,21 +12,21 @@ import (
 )
 
 const (
-	ModeDisabled      = "disabled"
-	ModeShadow        = "shadow"
-	ModeApproval      = "approval"
-	ModeAutomatic     = "automatic"
-	SeverityUnknown   = "unknown"
-	SeverityNone      = "none"
-	SeverityRoutine   = "routine"
-	SeverityLow       = "low"
-	SeverityMedium    = "medium"
-	SeverityHigh      = "high"
-	SeverityCritical  = "critical"
+	ModeDisabled                 = "disabled"
+	ModeShadow                   = "shadow"
+	ModeApproval                 = "approval"
+	ModeAutomatic                = "automatic"
+	SeverityUnknown              = "unknown"
+	SeverityNone                 = "none"
+	SeverityRoutine              = "routine"
+	SeverityLow                  = "low"
+	SeverityMedium               = "medium"
+	SeverityHigh                 = "high"
+	SeverityCritical             = "critical"
 	SeverityUnclassifiedSecurity = "unclassified_security"
-	SeverityExploited = "exploited"
-	BackupRequire     = "require"
-	BackupIgnore      = "ignore"
+	SeverityExploited            = "exploited"
+	BackupRequire                = "require"
+	BackupIgnore                 = "ignore"
 )
 
 var (
