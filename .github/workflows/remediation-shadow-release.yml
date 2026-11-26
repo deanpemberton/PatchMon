@@ -22,7 +22,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SOURCE_SHA: cc79ad0a8f5e748f77735a885ca64368b67def6b
-            BUILD_VERSION: 2.1.9-rc.remediation.9
+      BUILD_VERSION: 2.1.9-rc.remediation.9
       RELEASE_TAG: remediation-shadow-cc79ad0a8f5e
       CHECK_RUNS: "45897317839 45897317798 45897317769 45897317791"
     steps:
