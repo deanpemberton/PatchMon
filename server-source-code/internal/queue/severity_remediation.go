@@ -148,6 +148,10 @@ func (h *AutoPatchDispatchHandler) evaluateRemediationHost(ctx context.Context, 
 		row.Blocker = "no_unambiguous_eligible_packages"
 		return nil
 	}
+	s, err = remediation.ExpandPriorityDependencies(ctx, h.db, c, ev, s, row.Decisions, agentVersion, now)
+	if err != nil {
+		return err
+	}
 	if err = remediation.CheckHost(ctx, h.db, ev, s.Packages, now, c.Policy); err != nil {
 		row.Blocker = err.Error()
 		return nil
