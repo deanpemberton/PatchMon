@@ -111,6 +111,8 @@ type ReportRepository struct {
 
 // ReportPayload is the agent's report payload (subset of fields we process).
 type ReportPayload struct {
+	APTProvenance json.RawMessage `json:"aptProvenance,omitempty"`
+
 	Packages               []ReportPackage    `json:"packages"`
 	Repositories           []ReportRepository `json:"repositories"`
 	OSType                 string             `json:"osType"`
@@ -740,6 +742,12 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		}
 		if err := q.BulkInsertHostPackages(ctx, hpPayload); err != nil {
 			return nil, fmt.Errorf("BulkInsertHostPackages: %w", err)
+		}
+	}
+
+	if sections.Packages {
+		if err := storeAPTProvenance(ctx, tx, hostID, payload, hashes.PackagesHash); err != nil {
+			return nil, fmt.Errorf("store APT provenance: %w", err)
 		}
 	}
 

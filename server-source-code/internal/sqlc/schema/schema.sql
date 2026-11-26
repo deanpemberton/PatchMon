@@ -747,6 +747,11 @@ CREATE TABLE IF NOT EXISTS patch_policies (
     delay_minutes INTEGER,
     fixed_time_utc TEXT,
     timezone TEXT,
+    auto_reboot BOOLEAN NOT NULL DEFAULT false,
+    auto_patch_enabled BOOLEAN NOT NULL DEFAULT false,
+    auto_patch_days TEXT,
+    auto_patch_time TEXT,
+    auto_patch_last_run_at TIMESTAMP(3),
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );
@@ -936,3 +941,34 @@ SELECT
 FROM host_packages hp
 GROUP BY hp.package_id;
 CREATE UNIQUE INDEX IF NOT EXISTS mv_package_stats_pkey ON mv_package_stats (package_id);
+
+-- Opt-in remediation settings are separate from ordinary scheduled patching.
+CREATE TABLE IF NOT EXISTS patch_remediation_policies (
+    policy_id TEXT PRIMARY KEY REFERENCES patch_policies(id) ON DELETE CASCADE,
+    settings JSONB NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 1,
+    updated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    report JSONB
+);
+CREATE TABLE IF NOT EXISTS patch_remediation_findings (
+    policy_id TEXT NOT NULL REFERENCES patch_policies(id) ON DELETE CASCADE,
+    host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    package_name TEXT NOT NULL,
+    finding_key TEXT NOT NULL,
+    first_seen TIMESTAMPTZ NOT NULL,
+    last_seen TIMESTAMPTZ NOT NULL,
+    deadline TIMESTAMPTZ,
+    resolved_at TIMESTAMPTZ,
+    PRIMARY KEY (policy_id,host_id,package_name,finding_key)
+);
+CREATE INDEX IF NOT EXISTS patch_remediation_open_deadline ON patch_remediation_findings(policy_id,deadline) WHERE resolved_at IS NULL;
+
+-- Authenticated local observations only; never a patch authorization.
+CREATE TABLE IF NOT EXISTS patch_remediation_apt_provenance (
+    host_id TEXT PRIMARY KEY REFERENCES hosts(id) ON DELETE CASCADE,
+    identity_fingerprint TEXT NOT NULL,
+    packages_hash TEXT NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL,
+    evidence JSONB NOT NULL
+);

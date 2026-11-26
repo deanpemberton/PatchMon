@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Package represents a software package
 type Package struct {
@@ -95,6 +98,8 @@ type NetworkAddress struct {
 
 // ReportPayload represents the data sent to the server
 type ReportPayload struct {
+	APTProvenance json.RawMessage `json:"aptProvenance,omitempty"`
+
 	Packages               []Package    `json:"packages"`
 	Repositories           []Repository `json:"repositories"`
 	OSType                 string       `json:"osType"`
