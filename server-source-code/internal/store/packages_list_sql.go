@@ -358,6 +358,10 @@ func runListPackages(ctx context.Context, tx pgx.Tx, filters packagesListFilters
 			&r.AdvisoryCVECount,
 			&r.CVSSVersion,
 			&r.CVSSSource,
+			&r.UpdatePriorityPending,
+			&r.PriorityDeadline,
+			&r.PriorityFirstSeen,
+			&r.PriorityStatus,
 		); err != nil {
 			return nil, err
 		}
