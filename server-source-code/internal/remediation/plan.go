@@ -242,13 +242,19 @@ func ActiveCount(ctx context.Context, d *database.DB, policy string) (int, error
 	return count, err
 }
 
-// CanaryPassed requires the exact same package/version cohort, successful
-// execution, subsequent inventory, and fresh independent health evidence.
+// CanaryPassed admits a first eligible host for each exact package/version
+// cohort under the current authenticated policy revision. Native run history
+// elects that host durably, including a failed validation or execution. Other
+// hosts must wait for successful installation, fresh inventory and health.
+// The scheduler's transaction advisory lock serializes initial run creation;
+// dispatch retries use the same persisted election. A time-limited single-host
+// recovery waiver retains its original fixed scope.
 func CanaryPassed(ctx context.Context, d *database.DB, c Configuration, e Evidence, s Snapshot, now time.Time) (bool, error) {
-	if slices.Contains(c.Policy.CanaryHostIDs, s.HostID) {
-		return true, nil
+	if c.Policy.RecoveryWaiverUntil != nil {
+		return c.Policy.recoveryWaiverActive(s.HostID, now), nil
 	}
-	if len(c.Policy.CanaryHostIDs) == 0 {
+	current, ok := FindHost(e, s.HostID)
+	if !ok || !current.Safe(now, c.Policy) || current.OS == "" || current.OSVersion == "" {
 		return false, nil
 	}
 	tx, err := d.Begin(ctx)
@@ -256,59 +262,67 @@ func CanaryPassed(ctx context.Context, d *database.DB, c Configuration, e Eviden
 		return false, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	rows, err := tx.Query(ctx, `SELECT host_id,completed_at FROM patch_runs WHERE policy_id=$1 AND host_id=ANY($2::text[]) AND status='completed' AND NOT dry_run AND policy_snapshot->>'rollout_digest'=$3 AND policy_snapshot->>'remediation_revision'=$4 ORDER BY completed_at DESC LIMIT 20`, c.PolicyID, c.Policy.CanaryHostIDs, s.RolloutDigest, jsonNumber(c.Revision))
+	var elected, identity string
+	err = tx.QueryRow(ctx, `SELECT r.host_id, coalesce(r.policy_snapshot->>'identity_fingerprint','')
+	FROM patch_runs r JOIN hosts h ON h.id=r.host_id
+	WHERE r.policy_id=$1 AND r.policy_snapshot->>'severity_remediation'='true'
+	AND r.policy_snapshot->>'rollout_digest'=$2 AND r.policy_snapshot->>'remediation_revision'=$3
+	AND h.os_type=$4 AND h.os_version=$5
+	ORDER BY r.created_at ASC,r.id ASC LIMIT 1`, c.PolicyID, s.RolloutDigest, jsonNumber(c.Revision), current.OS, current.OSVersion).Scan(&elected, &identity)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// No cohort attempt exists. The first safe candidate can begin its
+		// native dry run; the scheduler holds the election lock until queued.
+		return true, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	type result struct {
-		id string
-		at time.Time
+	if identity == "" {
+		return false, nil
 	}
-	results := []result{}
-	for rows.Next() {
-		var r result
-		if err = rows.Scan(&r.id, &r.at); err != nil {
-			rows.Close()
-			return false, err
-		}
-		results = append(results, r)
+	if elected == s.HostID {
+		// Only that exact enrolled host may continue its own validation/run.
+		// LatestAttempt and ValidateDryRun prevent a retry of failed plans.
+		return identity == s.Identity, nil
 	}
-	err = rows.Err()
-	rows.Close()
+	h, ok := FindHost(e, elected)
+	if !ok || h.IdentityFingerprint != identity || !h.Safe(now, c.Policy) {
+		return false, nil
+	}
+	// The latest elected-host attempt must be an actual completed run.
+	// In particular, a failed attempt cannot release another host.
+	var at *time.Time
+	var status string
+	var dryRun bool
+	err = tx.QueryRow(ctx, `SELECT completed_at,status,dry_run FROM patch_runs
+	WHERE policy_id=$1 AND host_id=$2 AND policy_snapshot->>'severity_remediation'='true'
+	AND policy_snapshot->>'identity_fingerprint'=$3 AND policy_snapshot->>'rollout_digest'=$4
+	AND policy_snapshot->>'remediation_revision'=$5 ORDER BY created_at DESC,id DESC LIMIT 1`,
+		c.PolicyID, elected, identity, s.RolloutDigest, jsonNumber(c.Revision)).Scan(&at, &status, &dryRun)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	for _, r := range results {
-		h, ok := FindHost(e, r.id)
-		if !ok || !h.Safe(now, c.Policy) || h.ObservedAt.Before(r.at) || !Fresh(r.at, now, 7*24*time.Hour) {
-			continue
-		}
-		var confirmed bool
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosts WHERE id=$1 AND status='active' AND identity_fingerprint=$2 AND packages_hash=$3 AND last_full_report_at >= $4 AND awaiting_post_patch_report_run_id IS NULL AND identity_conflict_at IS NULL AND NOT COALESCE(needs_reboot,false))`, r.id, h.IdentityFingerprint, h.PackagesHash, r.at).Scan(&confirmed)
-		if err != nil {
+	if status != "completed" || dryRun || at == nil || !Fresh(*at, now, 7*24*time.Hour) || h.ObservedAt.Before(*at) {
+		return false, nil
+	}
+	var confirmed bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hosts WHERE id=$1 AND status='active' AND identity_fingerprint=$2 AND packages_hash=$3 AND last_full_report_at >= $4 AND awaiting_post_patch_report_run_id IS NULL AND identity_conflict_at IS NULL AND NOT COALESCE(needs_reboot,false))`, elected, identity, h.PackagesHash, *at).Scan(&confirmed)
+	if err != nil || !confirmed {
+		return false, err
+	}
+	for _, p := range s.Packages {
+		var match bool
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM host_packages hp JOIN packages p ON p.id=hp.package_id WHERE hp.host_id=$1 AND p.name=$2 AND hp.current_version=$3 AND hp.last_checked >= $4)`, elected, p.Name, p.Candidate, *at).Scan(&match)
+		if err != nil || !match {
 			return false, err
 		}
-		if !confirmed {
-			continue
-		}
-		ok = true
-		for _, p := range s.Packages {
-			var match bool
-			err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM host_packages hp JOIN packages p ON p.id=hp.package_id WHERE hp.host_id=$1 AND p.name=$2 AND hp.current_version=$3 AND hp.last_checked >= $4)`, r.id, p.Name, p.Candidate, r.at).Scan(&match)
-			if err != nil {
-				return false, err
-			}
-			if !match {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			return true, nil
-		}
 	}
-	return false, nil
+	return true, nil
 }
+
 func jsonNumber(i int64) string { raw, _ := json.Marshal(i); return string(raw) }
 
 // Recheck validates the current scope and evidence immediately before native

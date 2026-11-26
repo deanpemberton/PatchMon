@@ -2,6 +2,7 @@ package remediation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -138,6 +139,54 @@ func TestMigrationAndRemediationRepository(t *testing.T) {
 	if err != nil || len(c.Policy.BackupOnlyHostIDs) != 1 {
 		t.Fatalf("backup-only policy not persisted: %v", err)
 	}
+	// The configured preferred host is not required to have a particular
+	// package cohort. Elect the first admitted host from native history.
+	exec("UPDATE host_packages SET available_version='1.0-2' WHERE id='fixture-host-package'")
+	exec("INSERT INTO hosts(id,friendly_name,os_type,os_version,updated_at,api_id,api_key,package_manager,last_update,last_full_report_at,identity_fingerprint,packages_hash,status) VALUES('fixture-second','Second host','Debian','13',NOW(),'fixture-second-enrollment','fixture-not-a-secret','apt',$1,$1,'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','active')", now)
+	exec("INSERT INTO host_group_memberships(id,host_id,host_group_id) VALUES('fixture-second-member','fixture-second','fixture-group')")
+	h2 := h
+	h2.HostID = "fixture-second"
+	h2.IdentityFingerprint = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	h2.Targets = append([]Target(nil), h.Targets...)
+	evidence := Evidence{Hosts: []HostEvidence{h, h2}}
+	dynamic := c
+	dynamic.Policy.BackupOnlyHostIDs = nil
+	dynamic.Policy.CanaryHostIDs = []string{"fixture-host"}
+	s1, err := MakeSnapshot(dynamic, h, ds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2, err := MakeSnapshot(dynamic, h2, ds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := func(s Snapshot, want bool) {
+		t.Helper()
+		got, e := CanaryPassed(ctx, d, dynamic, evidence, s, now)
+		if e != nil || got != want {
+			t.Fatalf("cohort gate %s: got %v want %v: %v", s.HostID, got, want, e)
+		}
+	}
+	gate(s2, true)
+	raw, err := json.Marshal(s2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec("INSERT INTO patch_runs(id,host_id,job_id,patch_type,status,dry_run,updated_at,created_at,policy_id,policy_snapshot) VALUES('fixture-dynamic-canary','fixture-second','fixture-dynamic-job','patch_package','failed',true,NOW(),$1,'fixture-policy',$2)", now.Add(-time.Minute), raw)
+	gate(s1, false)
+	gate(s2, true)
+	// Different source/candidate tuple elects independently.
+	other := s1
+	other.RolloutDigest = PackageDigest([]VerifiedPackage{{Name: "other-bin", Installed: "1.0-1", Candidate: "1.0-2"}})
+	gate(other, true)
+	exec("UPDATE patch_runs SET status='completed',dry_run=false,completed_at=$1 WHERE id='fixture-dynamic-canary'", now.Add(-time.Second))
+	exec("INSERT INTO host_packages(id,host_id,package_id,current_version,needs_update,is_security_update,last_checked) VALUES('fixture-second-package','fixture-second','fixture-package','1.0-2',false,false,$1)", now)
+	gate(s1, true)
+	evidence.Hosts[1].ApplicationHealthy = false
+	gate(s1, false)
+	evidence.Hosts[1].ApplicationHealthy = true
+	exec("DELETE FROM host_group_memberships WHERE id='fixture-second-member'")
+
 	waiver := DefaultPolicy()
 	waiver.Mode = ModeAutomatic
 	waiver.MaxConcurrent = 1

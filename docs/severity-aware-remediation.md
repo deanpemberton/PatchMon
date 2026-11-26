@@ -180,3 +180,7 @@ mode, fixed-candidate verification and patch authorization.
 Render individual CVE identifiers in the UI using the shared `CveLink`
 component. Links open the canonical NIST NVD description in a new tab;
 never use an advisory-supplied URL or turn a missing identifier into a link.
+
+## Dynamic rollout election
+
+Automatic remediation elects the first eligible host in each exact OS/release and installed/candidate package cohort under the saved policy revision. Named canary hosts retain ordering preference, but no longer block unrelated cohorts. Native run history persists the election. A failed or unverified first attempt blocks the same cohort; followers require an actual completed installation, current matching enrollment, fresh subsequent inventory and positive application/backup evidence. Single-host temporary recovery waivers remain restricted to their original host. No per-patch approval is introduced, and the existing native concurrency and revalidation gates remain in force.
