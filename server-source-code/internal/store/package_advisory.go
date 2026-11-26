@@ -143,11 +143,11 @@ func packageAdvisorySQL(filters packagesListFilters, args []any) (cte, columns, 
  JOIN hosts h ON h.id=v.host_id AND h.identity_fingerprint=v.fingerprint
       AND h.packages_hash=v.package_hash AND h.os_type=v.os AND h.os_version=v.os_version
       AND h.status='active' AND h.identity_conflict_at IS NULL
-      AND h.last_update >= now() - interval '90 minutes'
-      AND h.last_full_report_at >= now() - interval '24 hours'
+      AND h.last_update >= (now() AT TIME ZONE 'UTC') - interval '90 minutes'
+      AND h.last_full_report_at >= (now() AT TIME ZONE 'UTC') - interval '24 hours'
  JOIN packages p ON p.name=v.package
  JOIN host_packages hp ON hp.host_id=h.id AND hp.package_id=p.id AND hp.current_version=v.installed
- WHERE hp.last_checked >= now() - interval '24 hours'` + where + `
+ WHERE hp.last_checked >= (now() AT TIME ZONE 'UTC') - interval '24 hours'` + where + `
  GROUP BY p.id
 )
 `
