@@ -73,6 +73,7 @@ func TestExpandedPriorityBatchCompatibleAgent(t *testing.T) {
 	p := DefaultPolicy()
 	p.Mode = ModeAutomatic
 	p.PriorityOnly = true
+	p.BackupOnlyHostIDs = []string{"host"}
 	c := Configuration{PolicyID: "policy", Revision: 2, Policy: p}
 	h := HostEvidence{HostID: "host", IdentityFingerprint: "identity"}
 	now := time.Now().UTC()
